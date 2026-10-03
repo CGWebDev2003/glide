@@ -1,0 +1,25 @@
+{
+  "url": "https://www.example.com",
+  "output": "kunde-reel.mp4",
+  "viewport": {
+    "width": 405,
+    "height": 720
+  },
+  "outputSize": {
+    "width": 1080,
+    "height": 1920
+  },
+  "fps": 60,
+  "scroll": {
+    "mode": "continuous",
+    "duration": 20,
+    "easing": "easeInOutSine"
+  },
+  "introDuration": 2,
+  "outroDuration": 1,
+  "hideSelectors": [
+    "#CybotCookiebotDialog"
+  ],
+  "maxDuration": 60,
+  "deviceScaleFactor": 3
+}

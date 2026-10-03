@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>glide test page</title>
+  <link rel="stylesheet" href="/vendor/lenis/lenis.css">
+  <style>
+    :root { --bg: #0f1115; --fg: #f3f1ea; --accent: #ff5a36; --muted: #8a8f98; }
+    * { box-sizing: border-box; margin: 0; }
+    body { background: var(--bg); color: var(--fg); font: 18px/1.5 system-ui, sans-serif; }
+    section { min-height: 100vh; padding: 12vh 8vw; position: relative; border-top: 1px solid #222; }
+    h1 { font-size: clamp(48px, 8vw, 128px); line-height: 1; letter-spacing: -0.03em; }
+    h2 { font-size: clamp(36px, 5vw, 72px); line-height: 1.05; margin-bottom: 4vh; }
+    .label { color: var(--muted); text-transform: uppercase; letter-spacing: .2em; font-size: 14px; margin-bottom: 2vh; }
+
+    /* --- HUD (debug): virtual time & scroll position, written in rAF ------- */
+    #hud { position: fixed; right: 16px; bottom: 16px; z-index: 50; font: 600 16px/1.3 ui-monospace, monospace;
+           background: rgba(0,0,0,.75); padding: 10px 14px; border-radius: 8px; color: #9ef01a; }
+    #progress { position: fixed; left: 0; top: 0; height: 6px; width: 100%; background: var(--accent);
+                transform-origin: 0 50%; transform: scaleX(0); z-index: 60; }
+
+    /* --- 1. CSS keyframe animation in the hero ---------------------------- */
+    @keyframes rise { from { opacity: 0; transform: translateY(80px); } to { opacity: 1; transform: none; } }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .hero h1 span { display: inline-block; animation: rise 1.2s cubic-bezier(.2,.7,.2,1) both; }
+    .hero h1 span:nth-child(2) { animation-delay: .25s; }
+    .hero h1 span:nth-child(3) { animation-delay: .5s; }
+    .badge { position: absolute; right: 8vw; top: 14vh; width: 160px; height: 160px; border-radius: 50%;
+             border: 6px dashed var(--accent); animation: spin 4s linear infinite; }
+    .badge::after { content: ''; position: absolute; left: 50%; top: -14px; width: 20px; height: 20px;
+                    margin-left: -10px; border-radius: 50%; background: var(--fg); }
+    /* animation WITHOUT fill-mode: is gone after it ends -> must not run during page load */
+    @keyframes grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+    .underline { height: 10px; width: 40vw; background: var(--accent); margin-top: 3vh; transform-origin: 0 50%;
+                 animation: grow 1.6s ease-in-out; }
+    .slow-img { position: absolute; right: 8vw; bottom: 10vh; width: 120px; height: 68px; border-radius: 8px; }
+    #timeout-text { opacity: 0; transition: opacity .6s ease; margin-top: 4vh; font-size: 24px; color: var(--accent); }
+    #timeout-text.show { opacity: 1; }
+    #raf-box { position: absolute; left: 8vw; bottom: 10vh; width: 60px; height: 60px; background: #3a86ff; border-radius: 12px; }
+
+    /* --- 2. IntersectionObserver + CSS transition --------------------------- */
+    .reveal { opacity: 0; transform: translateY(120px) scale(.92);
+              transition: opacity 1s ease, transform 1.4s cubic-bezier(.2,.7,.2,1); }
+    .reveal.in { opacity: 1; transform: none; }
+    .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2vw; }
+    .card { height: 40vh; border-radius: 20px; background: linear-gradient(135deg, #3a86ff, #8338ec); padding: 24px;
+            font-size: 28px; font-weight: 700; }
+    .card:nth-child(2) { transition-delay: .15s; background: linear-gradient(135deg, #ff006e, #fb5607); }
+    .card:nth-child(3) { transition-delay: .3s; background: linear-gradient(135deg, #06d6a0, #118ab2); }
+
+    /* --- 3. GSAP ScrollTrigger ------------------------------------------- */
+    .pin-wrap { height: 100vh; overflow: hidden; display: flex; align-items: center; padding: 0; }
+    .track { display: flex; gap: 4vw; padding-left: 8vw; will-change: transform; }
+    .panel { flex: 0 0 40vw; height: 60vh; border-radius: 24px; display: grid; place-items: center;
+             font-size: 64px; font-weight: 800; background: #1d2129; border: 2px solid #333; }
+    .panel:nth-child(odd) { background: #2a1d29; }
+    .scrub-box { width: 200px; height: 200px; background: var(--accent); border-radius: 24px; margin-top: 6vh; }
+    .gsap-in { width: 100%; height: 30vh; border-radius: 20px; background: #ffbe0b; color: #000;
+               display: grid; place-items: center; font-size: 48px; font-weight: 800; }
+
+    /* --- 4. lazy images ------------------------------------------------------ */
+    .gallery { display: grid; grid-template-columns: repeat(2, 1fr); gap: 2vw; }
+    .gallery img { width: 100%; height: auto; aspect-ratio: 16/9; border-radius: 16px; background: #222; display: block; }
+
+    footer { min-height: 60vh; padding: 12vh 8vw; background: var(--accent); color: #000; }
+    #cookie { position: fixed; left: 16px; bottom: 16px; z-index: 70; background: #fff; color: #000; padding: 20px; border-radius: 12px; width: 360px; }
+  </style>
+</head>
+<body>
+  <div id="progress"></div>
+  <div id="hud">t=0</div>
+  <div id="cookie">🍪 Cookie banner - should be hidden by hideSelectors</div>
+
+  <section class="hero" id="hero">
+    <p class="label">glide test page</p>
+    <h1><span>Smooth</span> <span>scroll</span> <span>reels.</span></h1>
+    <div class="underline"></div>
+    <img class="slow-img" src="/img/5.svg?delay=2500" alt="">
+    <p id="timeout-text">setTimeout(…, 600) fired</p>
+    <div class="badge"></div>
+    <video id="clip" src="/clip.webm" autoplay muted loop playsinline style="position:absolute;right:8vw;top:42vh;width:240px;border-radius:8px"></video>
+    <div id="raf-box"></div>
+  </section>
+
+  <section id="reveal">
+    <p class="label">IntersectionObserver + CSS transition</p>
+    <h2 class="reveal">Cards fade in when they enter the viewport.</h2>
+    <div class="cards">
+      <div class="card reveal">One</div>
+      <div class="card reveal">Two</div>
+      <div class="card reveal">Three</div>
+    </div>
+  </section>
+
+  <section id="gsap">
+    <p class="label">GSAP ScrollTrigger (scrub + toggleActions)</p>
+    <h2>Scrubbed rotation &amp; a time-based tween.</h2>
+    <div class="scrub-box"></div>
+    <div style="height: 20vh"></div>
+    <div class="gsap-in">GSAP onEnter tween</div>
+  </section>
+
+  <section class="pin-wrap" id="pin">
+    <div class="track">
+      <div class="panel">01</div><div class="panel">02</div><div class="panel">03</div><div class="panel">04</div>
+    </div>
+  </section>
+
+  <section id="gallery">
+    <p class="label">Lazy loaded images (300 ms server delay)</p>
+    <div class="gallery">
+      <img loading="lazy" src="/img/1.svg" alt=""><img loading="lazy" src="/img/2.svg" alt="">
+      <img loading="lazy" src="/img/3.svg" alt=""><img loading="lazy" src="/img/4.svg" alt="">
+    </div>
+  </section>
+
+  <footer>
+    <h2 class="reveal">The end.</h2>
+  </footer>
+
+  <script src="/vendor/gsap/gsap.min.js"></script>
+  <script src="/vendor/gsap/ScrollTrigger.min.js"></script>
+  <script src="/vendor/lenis/lenis.min.js"></script>
+  <script>
+    const params = new URLSearchParams(location.search);
+    gsap.registerPlugin(ScrollTrigger);
+
+    // Lenis (disable with ?lenis=0)
+    if (params.get('lenis') !== '0') {
+      const lenis = new Lenis({ lerp: 0.08 });
+      window.lenis = lenis;
+      lenis.on('scroll', ScrollTrigger.update);
+      gsap.ticker.add((time) => lenis.raf(time * 1000));
+      gsap.ticker.lagSmoothing(0);
+    }
+
+    // setTimeout based intro
+    setTimeout(() => document.getElementById('timeout-text').classList.add('show'), 600);
+
+    // IntersectionObserver reveal
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+    }, { threshold: 0.2 });
+    document.querySelectorAll('.reveal').forEach((el) => io.observe(el));
+
+    // ScrollTrigger: progress bar (scrub: true)
+    gsap.to('#progress', { scaleX: 1, ease: 'none', scrollTrigger: { start: 0, end: 'max', scrub: true } });
+    // scrub with smoothing -> needs (virtual) time to catch up
+    gsap.to('.scrub-box', { rotation: 360, x: '50vw', ease: 'none',
+      scrollTrigger: { trigger: '#gsap', start: 'top bottom', end: 'bottom top', scrub: 1 } });
+    // time-based tween triggered on enter
+    gsap.from('.gsap-in', { xPercent: -110, opacity: 0, duration: 1.2, ease: 'power3.out',
+      scrollTrigger: { trigger: '.gsap-in', start: 'top 85%', toggleActions: 'play none none none' } });
+    // pinned horizontal track
+    const track = document.querySelector('.track');
+    gsap.to(track, { x: () => -(track.scrollWidth - innerWidth), ease: 'none',
+      scrollTrigger: { trigger: '#pin', pin: true, start: 'top top', end: () => '+=' + (track.scrollWidth - innerWidth), scrub: true, invalidateOnRefresh: true } });
+
+    // rAF loop driven by performance.now + HUD
+    const box = document.getElementById('raf-box');
+    const hud = document.getElementById('hud');
+    const t0 = performance.now();
+    let frames = 0;
+    (function loop(ts) {
+      const t = (performance.now() - t0) / 1000;
+      box.style.transform = `translateX(${(Math.sin(t * Math.PI) * 0.5 + 0.5) * 40}vw)`;
+      hud.textContent = `t=${t.toFixed(3)}s  raf#${frames++}  y=${Math.round(scrollY)}`;
+      requestAnimationFrame(loop);
+    })();
+  </script>
+</body>
+</html>

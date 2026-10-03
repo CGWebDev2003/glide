@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.mp4
+*.webm
+.glide/
+**/test/out/
+!packages/core/test/site/clip.webm
+.next/
+next-env.d.ts
+*.tsbuildinfo

@@ -1,0 +1,22 @@
+{
+  "name": "glide-monorepo",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/core",
+    "apps/cli",
+    "apps/web"
+  ],
+  "engines": {
+    "node": ">=20.9"
+  },
+  "scripts": {
+    "build": "npm run build -w @glide/core && npm run build -w glide && npm run build -w @glide/web",
+    "build:core": "npm run build -w @glide/core && npm run build -w glide",
+    "test": "npm test -w @glide/core",
+    "test:e2e": "npm run test:e2e -w @glide/core",
+    "app": "npm run build && npm run start -w @glide/web",
+    "dev": "npm run build:core && npm run dev -w @glide/web",
+    "postinstall": "npm run build:core"
+  }
+}
