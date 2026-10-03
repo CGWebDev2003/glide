@@ -31,6 +31,28 @@ const scrollSchema = z
   })
   .prefault({});
 
+const actionSchema = z.object({
+  /** hover: move the mouse onto the element and stay; click: move there and click it. */
+  type: z.enum(['hover', 'click']),
+  /** CSS selector of the element. */
+  selector: z.string().min(1),
+  /** Only elements whose text contains this (case-insensitive) — picks one of several matches. */
+  text: z.string().optional(),
+  /** Seconds the cursor stays on the element after arriving (click: after the click). */
+  duration: z.number().min(0).default(1.5),
+  /** Seconds the cursor needs to travel to the element. */
+  moveDuration: z.number().min(0).default(0.7),
+});
+
+const cursorSchema = z
+  .object({
+    /** auto: arrow on desktop, touch dot on mobile viewports; none: no visible cursor. */
+    style: z.enum(['auto', 'arrow', 'touch', 'none']).default('auto'),
+    /** Cursor size in CSS px. */
+    size: z.number().min(8).max(200).default(28),
+  })
+  .prefault({});
+
 export const configSchema = z.object({
   url: z.string().url(),
   output: z.string().optional(),
@@ -64,6 +86,10 @@ export const configSchema = z.object({
   /** Virtual seconds to fast-forward before the first frame (e.g. preloaders). */
   warmup: z.number().min(0).default(0),
   hideSelectors: z.array(z.string()).default([]),
+  /** Elements to hover or click. Scrolling stops at each of them (top to bottom). */
+  actions: z.array(actionSchema).default([]),
+  /** Visible mouse cursor during actions. */
+  cursor: cursorSchema,
   /** Extra CSS injected into the page. */
   injectCss: z.string().optional(),
   /** Extra JS (function body) evaluated after load, before recording. */
@@ -96,6 +122,7 @@ export const configSchema = z.object({
 
 export type Config = z.infer<typeof configSchema>;
 export type ConfigInput = z.input<typeof configSchema>;
+export type Action = z.infer<typeof actionSchema>;
 
 export function resolveViewport(c: Config): { width: number; height: number; preset?: PresetName } {
   if (typeof c.viewport === 'string') return { ...PRESETS[c.viewport], preset: c.viewport };

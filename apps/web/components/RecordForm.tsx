@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { EASING_NAMES, PRESETS } from '@glide/core/options';
-import { DEFAULT_FORM, estimateDuration, fromConfig, toConfig, type FormState, type ViewportMode } from '@/lib/form';
+import { DEFAULT_FORM, estimateDuration, fromConfig, toConfig, type FormAction, type FormState, type ViewportMode } from '@/lib/form';
 import type { Project } from '@/lib/types';
 
 const COMMON_HIDE = [
@@ -179,6 +179,10 @@ export function RecordForm(p: Props) {
         </label>
       </Group>
 
+      <Group title="Hover & Klicks">
+        <ActionList actions={f.actions} onChange={(a) => set('actions', a)} />
+      </Group>
+
       <Group title="Ausgabe">
         <div className="row three">
           <label className="field">
@@ -348,6 +352,48 @@ function ProjectPicker(p: Props) {
         </button>
       )}
     </div>
+  );
+}
+
+function ActionList({ actions, onChange }: { actions: FormAction[]; onChange: (a: FormAction[]) => void }) {
+  const update = (i: number, patch: Partial<FormAction>) =>
+    onChange(actions.map((a, j) => (j === i ? { ...a, ...patch } : a)));
+  const add = (type: FormAction['type']) =>
+    onChange([...actions, { type, selector: '', text: '', duration: type === 'click' ? 2 : 1.5, extra: {} }]);
+  return (
+    <>
+      {actions.length > 0 && (
+        <ol className="actions">
+          {actions.map((a, i) => (
+            <li key={i} className="action">
+              <select aria-label="Aktion" value={a.type} onChange={(e) => update(i, { type: e.target.value as FormAction['type'] })}>
+                <option value="hover">Hover</option>
+                <option value="click">Klick</option>
+              </select>
+              <input aria-label="CSS-Selektor" className="mono" placeholder=".button-primary" value={a.selector}
+                onChange={(e) => update(i, { selector: e.target.value })} />
+              <input aria-label="Text (optional)" placeholder="Text (optional)" value={a.text}
+                onChange={(e) => update(i, { text: e.target.value })} />
+              <div className="input-unit">
+                <input aria-label="Dauer" type="number" min={0} step={0.5} value={a.duration}
+                  onChange={(e) => update(i, { duration: e.target.value === '' ? 0 : Number(e.target.value) })} />
+                <span>s</span>
+              </div>
+              <button type="button" className="btn ghost small danger" aria-label="Entfernen"
+                onClick={() => onChange(actions.filter((_, j) => j !== i))}>✕</button>
+            </li>
+          ))}
+        </ol>
+      )}
+      <div className="row-buttons">
+        <button type="button" className="btn ghost small" onClick={() => add('hover')}>+ Hover</button>
+        <button type="button" className="btn ghost small" onClick={() => add('click')}>+ Klick</button>
+      </div>
+      <p className="hint">
+        Das Scrollen hält an jedem Element an, ein Cursor fährt hin und hovert oder klickt. Reihenfolge: von oben nach unten.
+        Links und Formulare öffnen keine neue Seite. Mit „Text“ wählst du unter mehreren Treffern das Element mit diesem Text.
+      </p>
+    </>
   );
 }
 

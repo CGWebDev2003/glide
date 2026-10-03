@@ -5,7 +5,7 @@ export type JobStatus = 'queued' | 'running' | 'done' | 'error' | 'cancelled';
 export interface JobProgress {
   frame: number;
   total: number;
-  phase: 'intro' | 'scroll';
+  phase: 'intro' | 'scroll' | 'action';
   elapsedMs: number;
 }
 

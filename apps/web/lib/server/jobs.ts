@@ -202,7 +202,7 @@ class JobManager {
         },
         onProgress: (p) => {
           job.progress = p;
-          job.stage = p.phase === 'intro' ? 'Intro' : 'Scrollen';
+          job.stage = p.phase === 'intro' ? 'Intro' : p.phase === 'action' ? 'Aktion' : 'Scrollen';
           this.emit(job);
         },
         onPreview: (image, mime) => {
