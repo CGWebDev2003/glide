@@ -43,6 +43,7 @@ npm run dev        # Entwicklungsmodus mit Hot Reload (ohne Service Worker)
 Die App läuft lokal auf deinem Rechner, gerendert wird dort ebenfalls. Es gibt keine Server- oder Cloudkosten.
 
 - **Aufnehmen**: URL eingeben, Gerät, Scroll-Modus, Tempo, Intro/Outro, Hover & Klicks und auszublendende Elemente wählen. Für gängige Cookie-Banner und Chat-Widgets gibt es Ein-Klick-Chips. Seltene Optionen stehen unter „Erweitert“.
+- **In der Vorschau auswählen**: öffnet die Seite live im Aufnahme-Viewport. Statt Selektoren einzutippen, zeigst du auf ein Element und klickst es an: als **Hover**, als **Klick** oder zum **Ausblenden** (Cookie-Banner, Chat-Widgets). Mehr unter [Elemente in der Vorschau auswählen](#elemente-in-der-vorschau-auswählen).
 - **Live-Fortschritt**: „Frame x von y“, Render-Geschwindigkeit, Restzeit und alle ~0,5 s ein Vorschaubild des aktuellen Frames. Aufnahmen landen in einer Warteschlange und laufen nacheinander. Eine laufende Aufnahme lässt sich abbrechen.
 - **Videos**: Galerie mit Poster-Bild, Player, Download, „Erneut“ (lädt die Einstellungen zurück ins Formular) und Löschen. Auf dem Handy kann der Player das Video direkt teilen.
 - **Projekte**: Einstellungen pro Kunde speichern und wieder laden.
@@ -225,6 +226,20 @@ So läuft es ab:
 - Elemente, die nicht gefunden werden, werden mit einer Warnung übersprungen.
 - `maxDuration` verkürzt nur das Scrollen, Aktionen behalten ihre Dauer.
 
+### Elemente in der Vorschau auswählen
+
+In der Web-App (und Desktop-App) unter „Hover & Klicks“ oder „Ausblenden“ auf **„In der Vorschau auswählen“** klicken. Glide öffnet die Seite in einem Browser im Hintergrund, mit demselben Viewport, User-Agent und denselben ausgeblendeten Elementen wie die Aufnahme, und zeigt sie live an.
+
+- **Modus wählen**: *Hover*, *Klick* oder *Ausblenden*.
+- **Zeigen**: Das Element unter der Maus wird markiert und benannt. Die Vorschau zeigt dabei auch den echten Hover-Zustand der Seite. Auf dem Handy: wischen zum Scrollen, tippen zum Auswählen.
+- **Klicken** fügt das Element hinzu. Im Modus *Ausblenden* verschwindet es sofort aus der Vorschau.
+- **Größer / Kleiner** tauscht die letzte Auswahl gegen das Eltern- bzw. Kind-Element, **Rückgängig** entfernt sie.
+- Gewählte Hover & Klicks erscheinen nummeriert in der Vorschau. Rechts stehen alle Einträge, dort lassen sie sich auch wieder entfernen.
+
+Glide wählt dabei sinnvolle Ziele: Bei Hover/Klick das klickbare Element (Button, Link …) statt des Icons darin, beim Ausblenden die äußerste fixierte Ebene (das ganze Banner statt nur seines „OK“-Buttons). Der erzeugte Selektor ist eindeutig und möglichst robust: Er nutzt IDs, `data-testid` & Co. oder `aria-label`, sonst Tag plus sprechende Klassen (keine Hash-Klassen wie `css-1x2y3`, keine Zustandsklassen wie `active`), notfalls mit `:nth-of-type`. Er landet wie getippte Selektoren in der Config.
+
+In der Vorschau führen Klicks nie zu einer anderen Seite. Nach 3 Minuten ohne Aktivität schließt Glide den Vorschau-Browser. Es läuft immer nur eine Vorschau gleichzeitig.
+
 ## Ablauf einer Aufnahme
 
 1. Chromium (headless) starten. Vor jedem Seitenskript wird die Runtime injiziert (virtuelle Uhr), und die Animations-Timeline wird per CDP eingefroren.
@@ -246,6 +261,8 @@ packages/core/            @glide/core: der Recorder (von CLI und Web-App genutzt
   src/options.ts          browser-taugliche Konstanten für UIs (@glide/core/options)
   src/timeline.ts         reiner Scroll-Zeitplan: hold/move/action-Segmente, Easing, Sections, maxDuration
   src/actions.ts          Hover & Klicks: Elemente finden, Stopps wählen, Maus und Cursor pro Frame
+  src/picker.ts           Vorschau zum Auswählen (PickerSession): Screenshots, Element unter dem Zeiger
+  src/page/picker-runtime.ts  In-Page-Helfer der Vorschau: Zielwahl und Selektor-Erzeugung
   src/recorder.ts         Playwright-Ablauf, CDP, Treiberwahl, Frame-Loop, Abbruch, Live-Vorschau
   src/ffmpeg.ts           Prüfung, Encoder-Argumente, Streaming über stdin, Poster-Frames
   src/page/runtime.ts     In-Page-Runtime (virtuelle Zeit, Animationen, Videos, Scroll-Treiber)
@@ -256,6 +273,7 @@ apps/web/                 Next.js-App (App Router) + PWA
   app/api/events          Server-Sent Events: Job-Status live an alle offenen Fenster
   app/api/jobs, videos    Aufnahmen starten/abbrechen, Videos mit Range-Requests streamen, Poster
   app/api/projects        gespeicherte Projekte (projects.json)
+  app/api/picker          Vorschau zum Auswählen: Sitzung öffnen, Screenshots, Zeigen/Scrollen/Ausblenden
   components/             Formular, laufende Aufnahmen, Galerie, Player
   public/sw.js            Service Worker (App-Shell offline, /api nie gecacht)
 apps/desktop/             Electron-Hülle um die Web-App
@@ -317,6 +335,7 @@ Zustand aus der Seite und prüft:
 - ScrollTrigger `scrub:true` entspricht exakt der Scrollposition; `scrub:1` und der gepinnte horizontale Track bewegen sich kontinuierlich
 - `<video>` wird pro Frame um exakt 1/fps weitergeseekt
 - `hideSelectors` greift
+- Vorschau-Auswahl: Ausblenden wählt die äußerste fixierte Ebene, Klick den Button, IDs werden genutzt, erzeugte Selektoren finden dasselbe Element wieder, ausgeblendete Elemente verschwinden
 - Hover & Klicks (eigene Testseite `actions.html`): `:hover`-Transitions und Klick-Handler sind in Zwischenzuständen zu sehen, der Hover wandert von einem Element zum nächsten, das Scrollen steht während der Aktionen, ein Link-Klick navigiert nicht, der Cursor blendet ein und aus, fehlende Elemente werden übersprungen
 - **Determinismus**: zwei Aufnahmen sind Frame für Frame bitidentisch (`ffmpeg -f framemd5`; als Toleranz für Decoder-Rundung bei Videos auf der Seite ist > 40 dB PSNR erlaubt)
 

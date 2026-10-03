@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { chromium, devices, type Browser, type CDPSession, type Page } from 'playwright';
+import { chromium, devices, type Browser, type BrowserContext, type CDPSession, type Page } from 'playwright';
 import { resolveOutputSize, resolveViewport, type Config } from './config.js';
 import { checkFfmpeg, FrameEncoder } from './ffmpeg.js';
 import { ActionPlayer, resolveActions, type ResolvedAction } from './actions.js';
@@ -79,9 +79,8 @@ export async function record(config: Config, opts: RecordOptions): Promise<Recor
   const encoderName = config.format === 'mp4' ? 'libx264' : 'libvpx-vp9';
   const ffmpeg = await checkFfmpeg(encoderName);
 
-  const vp = resolveViewport(config);
   const out = resolveOutputSize(config);
-  const isMobile = vp.preset === 'mobile' || vp.width < 600;
+  const isMobile = isMobileViewport(config);
 
   const signal = opts.signal;
   const throwIfAborted = () => {
@@ -89,33 +88,13 @@ export async function record(config: Config, opts: RecordOptions): Promise<Recor
   };
   throwIfAborted();
 
-  const browser: Browser = await chromium.launch({
-    headless: !config.headful,
-    channel: config.browser === 'chromium' ? undefined : config.browser,
-    args: [
-      '--hide-scrollbars',
-      '--force-color-profile=srgb',
-      '--disable-renderer-backgrounding',
-      '--disable-background-timer-throttling',
-      '--disable-backgrounding-occluded-windows',
-      '--autoplay-policy=no-user-gesture-required',
-    ],
-  });
+  const browser = await launchBrowser(config);
   let encoder: FrameEncoder | null = null;
   // closing the browser interrupts whatever Playwright call is pending
   const onAbort = () => { void browser.close().catch(() => {}); };
   signal?.addEventListener('abort', onAbort, { once: true });
   try {
-    const context = await browser.newContext({
-      viewport: { width: vp.width, height: vp.height },
-      deviceScaleFactor: config.deviceScaleFactor,
-      isMobile,
-      hasTouch: isMobile,
-      userAgent: config.userAgent ?? (isMobile ? devices['iPhone 14'].userAgent : undefined),
-      reducedMotion: 'no-preference',
-      colorScheme: config.colorScheme ?? null,
-      extraHTTPHeaders: config.headers,
-    });
+    const context = await newContext(browser, config);
     // Serialized manually: dev runners (tsx/esbuild) may wrap functions in a
     // `__name` helper that does not exist inside the page.
     await context.addInitScript({
@@ -287,6 +266,41 @@ export async function record(config: Config, opts: RecordOptions): Promise<Recor
     encoder?.abort();
     await browser.close().catch(() => {});
   }
+}
+
+export const isMobileViewport = (c: Config) => {
+  const vp = resolveViewport(c);
+  return vp.preset === 'mobile' || vp.width < 600;
+};
+
+export function launchBrowser(c: Config): Promise<Browser> {
+  return chromium.launch({
+    headless: !c.headful,
+    channel: c.browser === 'chromium' ? undefined : c.browser,
+    args: [
+      '--hide-scrollbars',
+      '--force-color-profile=srgb',
+      '--disable-renderer-backgrounding',
+      '--disable-background-timer-throttling',
+      '--disable-backgrounding-occluded-windows',
+      '--autoplay-policy=no-user-gesture-required',
+    ],
+  });
+}
+
+export function newContext(browser: Browser, c: Config, deviceScaleFactor = c.deviceScaleFactor): Promise<BrowserContext> {
+  const vp = resolveViewport(c);
+  const isMobile = isMobileViewport(c);
+  return browser.newContext({
+    viewport: { width: vp.width, height: vp.height },
+    deviceScaleFactor,
+    isMobile,
+    hasTouch: isMobile,
+    userAgent: c.userAgent ?? (isMobile ? devices['iPhone 14'].userAgent : undefined),
+    reducedMotion: 'no-preference',
+    colorScheme: c.colorScheme ?? null,
+    extraHTTPHeaders: c.headers,
+  });
 }
 
 async function freezeTimeline(cdp: CDPSession): Promise<boolean> {

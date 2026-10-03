@@ -24,3 +24,10 @@ export {
   type Progress,
 } from './recorder.js';
 export { buildTimeline, scrollAt, frameCount, normalizeStops, segmentAt, type Timeline, type Segment } from './timeline.js';
+export {
+  PickerSession,
+  type PickMode,
+  type PickRect,
+  type PickCandidate,
+  type PickResult,
+} from './picker.js';

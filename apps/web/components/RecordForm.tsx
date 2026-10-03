@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { EASING_NAMES, PRESETS } from '@glide/core/options';
 import { DEFAULT_FORM, estimateDuration, fromConfig, toConfig, type FormAction, type FormState, type ViewportMode } from '@/lib/form';
 import type { Project } from '@/lib/types';
+import { Picker } from './Picker';
 
 const COMMON_HIDE = [
   { label: 'Cookiebot', sel: '#CybotCookiebotDialog' },
@@ -46,6 +47,13 @@ export function RecordForm(p: Props) {
   const [json, setJson] = useState('');
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [jsonOpen, setJsonOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const pickButton = (
+    <button type="button" className="btn ghost small pick-btn" disabled={!f.url.trim()} onClick={() => setPickerOpen(true)}
+      title={f.url.trim() ? undefined : 'Zuerst eine URL eingeben'}>
+      ◎ In der Vorschau auswählen
+    </button>
+  );
 
   useEffect(() => {
     if (jsonOpen) setJson(JSON.stringify(toConfig(f), null, 2));
@@ -160,6 +168,7 @@ export function RecordForm(p: Props) {
       </Group>
 
       <Group title="Ausblenden">
+        {pickButton}
         <div className="chips">
           {COMMON_HIDE.map((c) => (
             <button
@@ -180,6 +189,7 @@ export function RecordForm(p: Props) {
       </Group>
 
       <Group title="Hover & Klicks">
+        {pickButton}
         <ActionList actions={f.actions} onChange={(a) => set('actions', a)} />
       </Group>
 
@@ -296,6 +306,8 @@ export function RecordForm(p: Props) {
           </label>
         </div>
       </details>
+
+      {pickerOpen && <Picker form={f} setForm={setForm} onClose={() => setPickerOpen(false)} />}
 
       {p.error && <p className="error" role="alert">{p.error}</p>}
 

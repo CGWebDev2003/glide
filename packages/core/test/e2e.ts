@@ -16,6 +16,7 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseConfig } from '../src/config.js';
+import { PickerSession } from '../src/picker.js';
 import { record, type RecordResult } from '../src/recorder.js';
 import { scrollAt, segmentAt } from '../src/timeline.js';
 import { startServer } from './serve.js';
@@ -200,6 +201,40 @@ async function runActions(url: string) {
   check('nothing hovered while scrolling away', p.slice(-10).every((x) => x.hovered === ''), p[p.length - 1].hovered);
 }
 
+async function runPicker(url: string) {
+  console.log('\n── picker');
+  const s = await PickerSession.open(parseConfig({ url, viewport: { width: 1280, height: 720 } }));
+  try {
+    const center = (r: { x: number; y: number; width: number; height: number }) => [r.x + r.width / 2, r.y + r.height / 2] as const;
+    const picked = async (x: number, y: number, mode: 'hover' | 'click' | 'hide') => {
+      const r = await s.inspect(x, y, mode);
+      return r ? r.chain[r.start] : null;
+    };
+    // the "OK" button inside the fixed banner: hide picks the whole banner, click the button
+    const [ok] = await s.rects([{ selector: '.consent button' }]);
+    const hide = await picked(...center(ok!), 'hide');
+    check('hide mode picks the outermost fixed layer', hide?.selector === 'div.consent-wrap', hide?.selector);
+    const btn = await picked(...center(ok!), 'click');
+    check('click mode picks the button', !!btn?.label.startsWith('button'), btn?.selector);
+    await s.scroll(720);
+    await new Promise((r) => setTimeout(r, 300));
+    const [b1] = await s.rects([{ selector: '#b1' }]);
+    check('ids are used when unique', (await picked(...center(b1!), 'hover'))?.selector === '#b1');
+    await s.scroll(720);
+    await new Promise((r) => setTimeout(r, 300));
+    const [more] = await s.rects([{ selector: '.acc button', text: 'mehr erfahren' }]);
+    const sel = (await picked(...center(more!), 'click'))?.selector ?? '';
+    const [again] = await s.rects([{ selector: sel }]);
+    check('generated selector finds the same element again', !!again && Math.abs(again.y - more!.y) < 1 && Math.abs(again.x - more!.x) < 1, sel);
+    await s.setHidden(['div.consent-wrap']);
+    const [gone] = await s.rects([{ selector: '.consent button' }]);
+    check('hidden elements disappear from the preview', gone === null);
+    check('preview screenshot', (await s.screenshot()).length > 1000);
+  } finally {
+    await s.close();
+  }
+}
+
 const { server, url } = await startServer();
 try {
   const a = await run(`${url}?lenis=0`, 'e2e-native', 'native');
@@ -221,6 +256,7 @@ try {
     `${same}/${ha.length} frames bit-identical, worst PSNR ${minPsnr === Infinity ? '∞' : minPsnr.toFixed(1) + ' dB'}`);
   void c;
 
+  await runPicker(`${url}actions.html`);
   await runActions(`${url}actions.html`);
   contactSheet(path.join(outDir, 'e2e-actions.mp4'), path.join(outDir, 'sheet-actions.png'), 0, 400, 12);
 
