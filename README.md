@@ -9,16 +9,13 @@ Die Zeit im Browser ist virtuell. Pro Frame wird sie um exakt `1/fps` vorgestell
 Scrollposition gesetzt und ein Screenshot gemacht. ffmpeg baut daraus das Video. Wie lange die
 Aufnahme dauert, spielt keine Rolle: Jeder Frame zeigt exakt den Zustand zu seinem Zeitpunkt.
 
-```bash
-glide record kunde.json
-glide record --url https://example.com --preset mobile
-```
+Glide gibt es als **Web-App (PWA)** und als **CLI**. Beide nutzen denselben Kern und dieselben Config-Dateien.
 
 ---
 
 ## Installation
 
-Voraussetzungen: **Node.js ≥ 18.17** und **ffmpeg** (mit libx264, für WebM zusätzlich libvpx-vp9).
+Voraussetzungen: **Node.js ≥ 20.9** und **ffmpeg** (mit libx264, für WebM zusätzlich libvpx-vp9).
 
 ```bash
 # ffmpeg
@@ -28,18 +25,45 @@ winget install Gyan.FFmpeg     # Windows
 
 # Glide
 git clone <repo> glide && cd glide
-npm install                    # baut automatisch nach dist/ (prepare)
+npm install                    # installiert alles und baut Kern + CLI
 npx playwright install chromium
-npm link                       # stellt `glide` global bereit
 ```
 
-Wenn ffmpeg nicht im PATH liegt: `GLIDE_FFMPEG=/pfad/zu/ffmpeg glide record …`.
+Wenn ffmpeg nicht im PATH liegt: `GLIDE_FFMPEG=/pfad/zu/ffmpeg`.
 Fehlen ffmpeg oder der Encoder, bricht Glide vor dem Laden der Seite mit einer
-Installationsanleitung ab.
+Installationsanleitung ab. In der Web-App steht der Hinweis direkt oben.
 
-## Benutzung
+## Web-App
 
 ```bash
+npm run app        # baut und startet Glide auf http://localhost:4321
+npm run dev        # Entwicklungsmodus mit Hot Reload (ohne Service Worker)
+```
+
+Die App läuft lokal auf deinem Rechner, gerendert wird dort ebenfalls. Es gibt keine Server- oder Cloudkosten.
+
+- **Aufnehmen**: URL eingeben, Gerät, Scroll-Modus, Tempo, Intro/Outro und auszublendende Elemente wählen. Für gängige Cookie-Banner und Chat-Widgets gibt es Ein-Klick-Chips. Seltene Optionen stehen unter „Erweitert“.
+- **Live-Fortschritt**: „Frame x von y“, Render-Geschwindigkeit, Restzeit und alle ~0,5 s ein Vorschaubild des aktuellen Frames. Aufnahmen landen in einer Warteschlange und laufen nacheinander. Eine laufende Aufnahme lässt sich abbrechen.
+- **Videos**: Galerie mit Poster-Bild, Player, Download, „Erneut“ (lädt die Einstellungen zurück ins Formular) und Löschen. Auf dem Handy kann der Player das Video direkt teilen.
+- **Projekte**: Einstellungen pro Kunde speichern und wieder laden.
+- **Config als JSON**: zeigt die Einstellungen als CLI-kompatibles JSON. Du kannst es bearbeiten, kopieren oder eine vorhandene `kunde.json` laden.
+- **Benachrichtigung**, wenn ein Video fertig ist (nach einmaliger Freigabe über 🔔).
+
+Alles wird in **`~/Glide`** gespeichert: `videos/` (MP4/WebM + Poster), `projects.json` und `jobs.json` (Verlauf). Mit `GLIDE_DATA_DIR=/anderer/ordner npm run app` lässt sich der Ort ändern.
+
+### Als App installieren (PWA)
+
+Öffne `http://localhost:4321` in Chrome, Edge oder Safari (macOS Sonoma+) und wähle **„Installieren“** bzw. **„Zum Dock hinzufügen“**. Glide läuft dann in einem eigenen Fenster mit eigenem Icon. Der Service Worker cached nur die App-Oberfläche; Aufnahmen und Videos kommen immer live vom lokalen Server. Ist Glide nicht gestartet, zeigt die App einen Hinweis statt einer Fehlerseite.
+
+**Share Target**: Bei installierter App erscheint Glide im „Teilen“-Menü (Android/ChromeOS, Desktop-Chrome). Teilst du einen Link, öffnet sich Glide mit vorausgefüllter URL. Manuell geht das auch per `http://localhost:4321/?url=https://kunde.de`.
+
+**Vom Handy aus**: Starte Glide mit `npm run app` und öffne `http://<IP-deines-Rechners>:4321` im selben WLAN. Bedienung und Downloads funktionieren. Installieren als PWA, Share Target und Benachrichtigungen verlangen aber HTTPS, über eine reine LAN-IP gehen sie also nicht. Dafür einen HTTPS-Tunnel verwenden, z. B. `tailscale serve 4321`. Achtung: Wer die Adresse kennt, kann Aufnahmen starten. Den Port daher nicht ungeschützt ins Internet stellen.
+
+## CLI
+
+```bash
+npm link -w glide              # stellt `glide` global bereit (einmalig)
+
 # Schnelltest ohne Config
 glide record --url https://kunde.de --preset mobile
 glide record --url https://kunde.de --mode sections --pause 1.5 --hide "#cookie-banner"
@@ -99,8 +123,9 @@ Eine JSON-Datei pro Projekt. Nur `url` ist Pflicht, alles andere hat Defaults.
 }
 ```
 
-Weitere Beispiele: [`examples/kunde-desktop.json`](examples/kunde-desktop.json),
-[`examples/kunde-instagram.json`](examples/kunde-instagram.json) (9:16, 1080×1920).
+Weitere Beispiele: [`apps/cli/examples/kunde-desktop.json`](apps/cli/examples/kunde-desktop.json),
+[`apps/cli/examples/kunde-instagram.json`](apps/cli/examples/kunde-instagram.json) (9:16, 1080×1920).
+In der Web-App lassen sich dieselben Dateien unter „Config als JSON → Datei laden“ öffnen.
 
 | Feld | Default | Beschreibung |
 |---|---|---|
@@ -152,20 +177,28 @@ Weitere Beispiele: [`examples/kunde-desktop.json`](examples/kunde-desktop.json),
 
 ## Architektur
 
+npm-Workspaces-Monorepo:
+
 ```
-src/
-  cli.ts            CLI (commander), Fortschrittsanzeige, Fehlermeldungen
-  config.ts         Schema (zod), Presets, Output-Größe
-  timeline.ts       reiner Scroll-Zeitplan: hold/move-Segmente, Easing, Sections, maxDuration
-  easing.ts         Easing-Funktionen
-  recorder.ts       Playwright-Ablauf, CDP, Treiberwahl, Frame-Loop
-  ffmpeg.ts         Prüfung, Encoder-Argumente, Streaming über stdin mit Backpressure
-  page/runtime.ts   In-Page-Runtime (virtuelle Zeit, Animationen, Videos, Scroll-Treiber)
-test/
-  site/index.html   Testseite: Keyframes, IO + Transition, GSAP ScrollTrigger (scrub, pin, toggleActions), Lenis, Lazy Images
-  e2e.ts            nimmt die Testseite auf und prüft jeden Frame (siehe unten)
-  *.test.ts         Unit-Tests (Zeitplan, Config, Encoder)
+packages/core/            @glide/core: der Recorder (von CLI und Web-App genutzt)
+  src/config.ts           Schema (zod), Presets, Output-Größe
+  src/options.ts          browser-taugliche Konstanten für UIs (@glide/core/options)
+  src/timeline.ts         reiner Scroll-Zeitplan: hold/move-Segmente, Easing, Sections, maxDuration
+  src/recorder.ts         Playwright-Ablauf, CDP, Treiberwahl, Frame-Loop, Abbruch, Live-Vorschau
+  src/ffmpeg.ts           Prüfung, Encoder-Argumente, Streaming über stdin, Poster-Frames
+  src/page/runtime.ts     In-Page-Runtime (virtuelle Zeit, Animationen, Videos, Scroll-Treiber)
+  test/                   Testseite, E2E-Prüfung, Unit-Tests
+apps/cli/                 `glide` CLI (commander), Fortschrittsanzeige, Ctrl+C bricht sauber ab
+apps/web/                 Next.js-App (App Router) + PWA
+  lib/server/jobs.ts      Warteschlange (eine Aufnahme gleichzeitig), Fortschritt, Verlauf in jobs.json
+  app/api/events          Server-Sent Events: Job-Status live an alle offenen Fenster
+  app/api/jobs, videos    Aufnahmen starten/abbrechen, Videos mit Range-Requests streamen, Poster
+  app/api/projects        gespeicherte Projekte (projects.json)
+  components/             Formular, laufende Aufnahmen, Galerie, Player
+  public/sw.js            Service Worker (App-Shell offline, /api nie gecacht)
 ```
+
+Die Web-App lädt `@glide/core` zur Laufzeit mit Nodes eigenem Modul-Loader statt über den Bundler (`lib/server/core.ts`). Playwright und die Runtime, die per `Function.prototype.toString` in die Seite injiziert wird, bleiben dadurch unverändert.
 
 ### Was ein Frame genau macht (`page/runtime.ts`)
 
@@ -179,13 +212,13 @@ test/
 
 ### Übernommene Muster aus timesnap/timecut/timeweb
 
-[timesnap](https://github.com/tungs/timesnap) und [timeweb](https://github.com/tungs/timeweb) überschreiben vor dem Laden der Seite `Date`, `Date.now`, `performance.now`, `requestAnimationFrame` und `setTimeout`/`setInterval` und führen fällige Timer beim Vorspulen in zeitlicher Reihenfolge aus. glide macht es genauso und ergänzt `requestIdleCallback` sowie ein deterministisches `Math.random`. Ebenfalls von dort übernommen: Frames per stdout/Pipe an ffmpeg streamen. timesnap selbst nennt CSS-Animationen und -Transitions als Grenze. timeweb ergänzt dafür `document.getAnimations()` mit Pausieren und Seeken sowie das Pausieren und Seeken von Videos; diesen Ansatz nutzt glide hier auch.
+[timesnap](https://github.com/tungs/timesnap) und [timeweb](https://github.com/tungs/timeweb) überschreiben vor dem Laden der Seite `Date`, `Date.now`, `performance.now`, `requestAnimationFrame` und `setTimeout`/`setInterval` und führen fällige Timer beim Vorspulen in zeitlicher Reihenfolge aus. Glide macht es genauso und ergänzt `requestIdleCallback` sowie ein deterministisches `Math.random`. Ebenfalls von dort übernommen: Frames per stdout/Pipe an ffmpeg streamen. timesnap selbst nennt CSS-Animationen und -Transitions als Grenze. timeweb ergänzt dafür `document.getAnimations()` mit Pausieren und Seeken sowie das Pausieren und Seeken von Videos; diesen Ansatz nutzt Glide hier auch.
 
 ### Entscheidung: Web Animations API + CDP-Freeze (Hybrid)
 
 - **Nur CDP Animation Domain** (`Animation.animationStarted` + `seekAnimations`): Neue Animationen kommen als asynchrone Events mit IDs an, also mit einem Wettlauf zwischen Event und Screenshot. `seekAnimations` greift nur bei pausierten Animationen, `animationend`/`transitionend` feuern nicht, und WAAPI-Animationen von Bibliotheken (z. B. Motion) lassen sich schlechter abdecken. Für das Seeken ist das zu unzuverlässig.
 - **Nur Web Animations API** (`document.getAnimations()` → pausieren → `currentTime` setzen): synchron im selben Tick, deckt CSS-Animationen, Transitions und `element.animate` ab, und Animationen ohne Dokument-Timeline (CSS Scroll-driven Animations) bleiben unberührt. **Aber:** Zwischen Seitenstart und erstem Frame laufen Animationen in Echtzeit. Bei langsam ladenden Seiten ist eine Hero-Animation ohne `fill-mode` dann schon vorbei und taucht in `getAnimations()` gar nicht mehr auf.
-- **Gewählt: Hybrid.** Per CDP wird nur `Animation.setPlaybackRate(0)` gesetzt. Damit steht die Dokument-Timeline still, und keine Animation kann in Echtzeit fortschreiten, auch nicht während des Ladens. Geseekt wird ausschließlich synchron über die Web Animations API. Ist eine Animation zeitlich fertig, ruft glide `finish()` auf, damit `animationend`/`transitionend` feuern.
+- **Gewählt: Hybrid.** Per CDP wird nur `Animation.setPlaybackRate(0)` gesetzt. Damit steht die Dokument-Timeline still, und keine Animation kann in Echtzeit fortschreiten, auch nicht während des Ladens. Geseekt wird ausschließlich synchron über die Web Animations API. Ist eine Animation zeitlich fertig, ruft Glide `finish()` auf, damit `animationend`/`transitionend` feuern.
   Belegt durch den E2E-Test: Mit `GLIDE_NO_CDP_FREEZE=1` (nur WAAPI) fehlt die `fill-mode:none`-Animation hinter einem 2,5 s langsamen Bild komplett im Video, mit Freeze ist sie in 39 Zwischenframes zu sehen. Ohne CDP (z. B. in anderen Browsern) fällt Glide auf reines WAAPI zurück und gibt eine Warnung aus.
 
 ### Größte Risiken (und was dagegen getan ist)
@@ -206,7 +239,7 @@ test/
 ```bash
 npm test          # Unit-Tests
 npm run test:e2e  # Testseite aufnehmen und Frames prüfen
-npm run test:site # Testseite unter http://127.0.0.1:4173 (?lenis=0 ohne Lenis)
+npm run test:site -w @glide/core  # Testseite unter http://127.0.0.1:4173 (?lenis=0 ohne Lenis)
 ```
 
 `test:e2e` nimmt die Testseite mit nativem und mit Lenis-Treiber auf, liest pro Frame den
@@ -219,9 +252,9 @@ Zustand aus der Seite und prüft:
 - ScrollTrigger `scrub:true` entspricht exakt der Scrollposition; `scrub:1` und der gepinnte horizontale Track bewegen sich kontinuierlich
 - `<video>` wird pro Frame um exakt 1/fps weitergeseekt
 - `hideSelectors` greift
-- **Determinismus**: zwei Aufnahmen sind Frame für Frame identisch (`ffmpeg -f framemd5`; bei Videoframes auf der Seite ist ein Rundungsrauschen von > 40 dB PSNR erlaubt)
+- **Determinismus**: zwei Aufnahmen sind Frame für Frame bitidentisch (`ffmpeg -f framemd5`; als Toleranz für Decoder-Rundung bei Videos auf der Seite ist > 40 dB PSNR erlaubt)
 
-Zusätzlich schreibt der Test Kontaktbögen (`test/out/sheet-*.png`) zum Anschauen.
+Zusätzlich schreibt der Test Kontaktbögen (`packages/core/test/out/sheet-*.png`) zum Anschauen.
 
 ## Bekannte Grenzen
 

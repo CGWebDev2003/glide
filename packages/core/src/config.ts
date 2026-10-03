@@ -3,12 +3,9 @@ import path from 'node:path';
 import { z } from 'zod';
 import { EASING_NAMES } from './easing.js';
 
-export const PRESETS = {
-  desktop: { width: 1920, height: 1080 },
-  laptop: { width: 1440, height: 900 },
-  mobile: { width: 390, height: 844 },
-} as const;
-export type PresetName = keyof typeof PRESETS;
+import { PRESETS, type PresetName } from './options.js';
+
+export { PRESETS, type PresetName };
 
 const viewportSchema = z.union([
   z.enum(['desktop', 'laptop', 'mobile']),
@@ -145,7 +142,9 @@ export async function loadConfigFile(file: string): Promise<{ raw: Record<string
   }
 }
 
-export class ConfigError extends Error {}
+export class ConfigError extends Error {
+  override name = 'ConfigError';
+}
 
 export function defaultOutputName(c: Config): string {
   const host = new URL(c.url).hostname.replace(/^www\./, '') || 'page';

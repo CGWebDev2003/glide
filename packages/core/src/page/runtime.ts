@@ -201,7 +201,7 @@ export function installGlideRuntime(opts: { seed: number | null }): void {
   };
 
   // ---- <video> ---------------------------------------------------------------
-  type ManagedVideo = { birth: number; base: number };
+  type ManagedVideo = { birth: number; base: number; synced: boolean };
   const videos = new Map<HTMLVideoElement, ManagedVideo>();
   let syncVideos = true;
 
@@ -220,16 +220,27 @@ export function installGlideRuntime(opts: { seed: number | null }): void {
       let m = videos.get(v);
       if (!m) {
         if (v.paused && !v.autoplay) continue;
-        m = { birth: now, base: v.autoplay ? 0 : v.currentTime };
+        m = { birth: now, base: v.autoplay ? 0 : v.currentTime, synced: false };
         videos.set(v, m);
       }
       if (!v.paused) v.pause();
+      if (!m.synced && v.readyState < 2 && v.preload !== 'none') {
+        // first frame of this video: wait (once) until it has decodable data
+        await new Promise<void>((resolve) => {
+          const done = () => { v.removeEventListener('loadeddata', done); v.removeEventListener('error', done); resolve(); };
+          v.addEventListener('loadeddata', done);
+          v.addEventListener('error', done);
+          nativeSetTimeout(done, 5000);
+        });
+      }
       if (v.readyState < 1 || !Number.isFinite(v.duration) || v.duration <= 0) continue;
       let t = m.base + (now - m.birth) / 1000;
       t = v.loop ? t % v.duration : Math.min(t, v.duration);
       // nudge past exact frame boundaries so the decoder picks the same frame every run
       t = Math.min(t + 0.001, v.duration);
-      if (Math.abs(v.currentTime - t) > 0.0005) pending.push(seek(v, t));
+      // always seek once: autoplay videos may have run in real time during page load
+      if (!m.synced || Math.abs(v.currentTime - t) > 0.0005) pending.push(seek(v, t));
+      m.synced = true;
     }
     await Promise.all(pending);
   };

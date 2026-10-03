@@ -1,4 +1,5 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { chromium, devices, type Browser, type CDPSession, type Page } from 'playwright';
 import { resolveOutputSize, resolveViewport, type Config } from './config.js';
@@ -18,6 +19,18 @@ export interface RecordOptions {
   debugEvery?: number;
   /** JS expression evaluated in the page after every frame; results are returned (testing). */
   probe?: string;
+  /** cancels the recording; record() rejects with RecordAbortedError */
+  signal?: AbortSignal;
+  /** receives a captured frame at most every `previewInterval` ms (live preview) */
+  onPreview?: (image: Buffer, mime: 'image/jpeg' | 'image/png', frame: number) => void;
+  previewInterval?: number;
+}
+
+export class RecordAbortedError extends Error {
+  constructor() {
+    super('recording aborted');
+    this.name = 'RecordAbortedError';
+  }
 }
 
 export interface Progress {
@@ -47,6 +60,16 @@ declare global {
   }
 }
 
+/** Checks that Playwright's Chromium is installed (unless an installed Chrome/Edge is used). */
+export function browserStatus(): { ok: boolean; message?: string } {
+  try {
+    if (existsSync(chromium.executablePath())) return { ok: true };
+  } catch {
+    /* fall through */
+  }
+  return { ok: false, message: 'Chromium für Playwright fehlt. Im Projektordner ausführen: npx playwright install chromium' };
+}
+
 export async function record(config: Config, opts: RecordOptions): Promise<RecordResult> {
   const log = opts.log ?? (() => {});
   const warn = opts.warn ?? log;
@@ -56,6 +79,12 @@ export async function record(config: Config, opts: RecordOptions): Promise<Recor
   const vp = resolveViewport(config);
   const out = resolveOutputSize(config);
   const isMobile = vp.preset === 'mobile' || vp.width < 600;
+
+  const signal = opts.signal;
+  const throwIfAborted = () => {
+    if (signal?.aborted) throw new RecordAbortedError();
+  };
+  throwIfAborted();
 
   const browser: Browser = await chromium.launch({
     headless: !config.headful,
@@ -70,6 +99,9 @@ export async function record(config: Config, opts: RecordOptions): Promise<Recor
     ],
   });
   let encoder: FrameEncoder | null = null;
+  // closing the browser interrupts whatever Playwright call is pending
+  const onAbort = () => { void browser.close().catch(() => {}); };
+  signal?.addEventListener('abort', onAbort, { once: true });
   try {
     const context = await browser.newContext({
       viewport: { width: vp.width, height: vp.height },
@@ -148,7 +180,9 @@ export async function record(config: Config, opts: RecordOptions): Promise<Recor
     let frame = 0;
     const scrollPositions: number[] = [];
     const probes: unknown[] = [];
+    let lastPreview = 0;
     const shoot = async (y: number, total: number, phase: Progress['phase']) => {
+      throwIfAborted();
       const actualY = await page.evaluate(
         ([y, dt, to]) => window.__glide.frame(y, dt, to) as Promise<number>,
         [y, frame === 0 ? 0 : dt, config.imageTimeout] as const,
@@ -163,6 +197,10 @@ export async function record(config: Config, opts: RecordOptions): Promise<Recor
       });
       const buf = Buffer.from(shot.data, 'base64');
       await encoder!.write(buf);
+      if (opts.onPreview && Date.now() - lastPreview >= (opts.previewInterval ?? 400)) {
+        lastPreview = Date.now();
+        opts.onPreview(buf, config.captureFormat === 'jpeg' ? 'image/jpeg' : 'image/png', frame);
+      }
       if (opts.debugFramesDir && frame % (opts.debugEvery ?? 30) === 0) {
         const name = `frame-${String(frame).padStart(5, '0')}.${config.captureFormat === 'jpeg' ? 'jpg' : 'png'}`;
         await writeFile(path.join(opts.debugFramesDir, name), buf);
@@ -196,6 +234,7 @@ export async function record(config: Config, opts: RecordOptions): Promise<Recor
       await shoot(scrollAt(timeline, i / config.fps), total, 'scroll');
     }
 
+    throwIfAborted();
     await encoder.finish();
     encoder = null;
     return {
@@ -210,7 +249,16 @@ export async function record(config: Config, opts: RecordOptions): Promise<Recor
       scrollPositions,
       probes,
     };
+  } catch (e) {
+    if (signal?.aborted) {
+      encoder?.abort();
+      encoder = null;
+      await rm(opts.output, { force: true }).catch(() => {});
+      throw new RecordAbortedError();
+    }
+    throw e;
   } finally {
+    signal?.removeEventListener('abort', onAbort);
     encoder?.abort();
     await browser.close().catch(() => {});
   }

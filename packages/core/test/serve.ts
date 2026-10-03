@@ -1,11 +1,20 @@
 /** Tiny static server for the local test page (GSAP + Lenis served from node_modules). */
 import { createServer, type Server } from 'node:http';
+import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
-const mods = path.resolve(root, '../node_modules');
+
+/** nearest node_modules containing gsap (works with npm workspaces hoisting) */
+function findModules(dir: string): string {
+  for (let d = dir; ; d = path.dirname(d)) {
+    if (existsSync(path.join(d, 'node_modules', 'gsap'))) return path.join(d, 'node_modules');
+    if (path.dirname(d) === d) throw new Error('gsap not installed');
+  }
+}
+const mods = findModules(root);
 
 const routes: Record<string, string> = {
   '/vendor/gsap/gsap.min.js': path.join(mods, 'gsap/dist/gsap.min.js'),

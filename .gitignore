@@ -3,5 +3,8 @@ dist/
 *.mp4
 *.webm
 .glide/
-test/out/
-!test/site/clip.webm
+**/test/out/
+!packages/core/test/site/clip.webm
+.next/
+next-env.d.ts
+*.tsbuildinfo

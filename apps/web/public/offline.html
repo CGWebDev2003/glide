@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Glide – offline</title>
+  <style>
+    :root { color-scheme: dark light; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; font: 16px/1.5 system-ui, sans-serif;
+           background: #0e0f13; color: #ecebe6; text-align: center; padding: 24px; }
+    @media (prefers-color-scheme: light) { body { background: #f6f5f1; color: #18181b; } }
+    h1 { font-size: 22px; margin: 0 0 8px; }
+    p { opacity: .7; max-width: 32ch; margin: 0 auto 20px; }
+    button { font: inherit; padding: 10px 18px; border-radius: 10px; border: 0; background: #ff6a3d; color: #1a0d07; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Glide ist nicht erreichbar</h1>
+    <p>Läuft Glide auf deinem Rechner? Starte es mit <code>npm run app</code> und lade die Seite neu.</p>
+    <button onclick="location.reload()">Neu laden</button>
+  </main>
+</body>
+</html>

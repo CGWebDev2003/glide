@@ -1,6 +1,8 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 
-export class FfmpegError extends Error {}
+export class FfmpegError extends Error {
+  override name = 'FfmpegError';
+}
 
 export function ffmpegBinary(): string {
   return process.env.GLIDE_FFMPEG || process.env.FFMPEG_PATH || 'ffmpeg';
@@ -121,4 +123,19 @@ export class FrameEncoder {
     try { this.proc.stdin!.destroy(); } catch { /* ignore */ }
     this.proc.kill('SIGKILL');
   }
+}
+
+/** Extracts a single frame as JPEG (poster/thumbnail). */
+export function extractPoster(video: string, output: string, atSeconds: number, width = 960): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const p = spawn(ffmpegBinary(), [
+      '-hide_banner', '-loglevel', 'error', '-y',
+      '-ss', String(Math.max(0, atSeconds)), '-i', video,
+      '-frames:v', '1', '-vf', `scale=${width}:-2`, '-q:v', '3', output,
+    ], { stdio: ['ignore', 'ignore', 'pipe'] });
+    let err = '';
+    p.stderr!.on('data', (d) => (err += d));
+    p.on('error', reject);
+    p.on('close', (code) => (code === 0 ? resolve() : reject(new FfmpegError(`poster extraction failed: ${err}`))));
+  });
 }

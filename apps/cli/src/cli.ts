@@ -2,16 +2,24 @@
 import { writeFile, access } from 'node:fs/promises';
 import path from 'node:path';
 import { Command, Option } from 'commander';
-import { ConfigError, defaultOutputName, loadConfigFile, parseConfig, resolveOutputSize, resolveViewport } from './config.js';
-import { EASING_NAMES } from './easing.js';
-import { FfmpegError } from './ffmpeg.js';
-import { record, type Progress } from './recorder.js';
+import {
+  ConfigError,
+  defaultOutputName,
+  EASING_NAMES,
+  FfmpegError,
+  loadConfigFile,
+  parseConfig,
+  record,
+  resolveOutputSize,
+  resolveViewport,
+  type Progress,
+} from '@glide/core';
 
 const program = new Command();
 program
   .name('glide')
   .description('Record websites as perfectly smooth scroll videos (deterministic, frame by frame).')
-  .version('0.1.0');
+  .version('0.2.0');
 
 const num = (v: string) => {
   const n = Number(v);
@@ -95,8 +103,15 @@ program
     info(`  viewport ${vp.width}×${vp.height} @${config.deviceScaleFactor}x, video ${size.width}×${size.height}, ${config.fps} fps, ${config.format}`);
 
     const progress = createProgress(quiet);
+    const ac = new AbortController();
+    process.once('SIGINT', () => {
+      progress.clear();
+      process.stderr.write('\n  aborting…\n');
+      ac.abort();
+    });
     const res = await record(config, {
       output,
+      signal: ac.signal,
       log: (m) => { progress.clear(); info(`  ${m}`); },
       warn: (m) => { progress.clear(); process.stderr.write(`  ⚠ ${m}\n`); },
       onProgress: progress.update,
@@ -177,7 +192,9 @@ const bar = (f: number, w = 24) => {
 const fmt = (s: number) => (s >= 60 ? `${Math.floor(s / 60)}m${String(Math.round(s % 60)).padStart(2, '0')}s` : `${Math.round(s)}s`);
 
 program.parseAsync().catch((e: unknown) => {
-  if (e instanceof ConfigError || e instanceof FfmpegError) {
+  if (e instanceof Error && e.name === 'RecordAbortedError') {
+    process.stderr.write('\n✖ aborted, no video written\n');
+  } else if (e instanceof ConfigError || e instanceof FfmpegError) {
     process.stderr.write(`\n✖ ${e.message}\n`);
   } else if (e instanceof Error && /Executable doesn't exist|browserType.launch/.test(e.message)) {
     process.stderr.write(`\n✖ Chromium for Playwright is missing. Run: npx playwright install chromium\n\n${e.message}\n`);

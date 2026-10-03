@@ -1,0 +1,24 @@
+{
+  "name": "glide",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Glide CLI: record websites as perfectly smooth scroll videos.",
+  "type": "module",
+  "bin": {
+    "glide": "dist/cli.js"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/cli.ts"
+  },
+  "dependencies": {
+    "@glide/core": "*",
+    "commander": "^13.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  }
+}
