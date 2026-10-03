@@ -3,6 +3,16 @@ import type { EasingName } from '@glide/core/options';
 
 export type ViewportMode = 'desktop' | 'laptop' | 'mobile' | 'custom';
 
+export interface FormAction {
+  type: 'hover' | 'click';
+  selector: string;
+  /** optional: only elements containing this text */
+  text: string;
+  duration: number;
+  /** keys the form has no field for (e.g. moveDuration) */
+  extra: Record<string, unknown>;
+}
+
 export interface FormState {
   url: string;
   name: string;
@@ -23,6 +33,7 @@ export interface FormState {
   introDuration: number;
   outroDuration: number;
   hideSelectors: string;
+  actions: FormAction[];
   scrollDriver: 'auto' | 'native' | 'lenis' | 'custom';
   lenisPath: string;
   scrollHook: string;
@@ -57,6 +68,7 @@ export const DEFAULT_FORM: FormState = {
   introDuration: 2,
   outroDuration: 1.5,
   hideSelectors: '',
+  actions: [],
   scrollDriver: 'auto',
   lenisPath: 'lenis',
   scrollHook: '',
@@ -96,6 +108,16 @@ export function toConfig(f: FormState): Record<string, unknown> {
   c.introDuration = f.introDuration;
   c.outroDuration = f.outroDuration;
   if (lines(f.hideSelectors).length) c.hideSelectors = lines(f.hideSelectors);
+  const actions = f.actions
+    .filter((a) => a.selector.trim())
+    .map((a) => ({
+      ...a.extra,
+      type: a.type,
+      selector: a.selector.trim(),
+      ...(a.text.trim() ? { text: a.text.trim() } : {}),
+      duration: a.duration,
+    }));
+  if (actions.length) c.actions = actions;
   if (f.scrollDriver !== d.scrollDriver) c.scrollDriver = f.scrollDriver;
   if (f.lenisPath.trim() && f.lenisPath.trim() !== d.lenisPath) c.lenisPath = f.lenisPath.trim();
   if (f.scrollDriver === 'custom' && f.scrollHook.trim()) c.scrollHook = f.scrollHook.trim();
@@ -115,7 +137,7 @@ export function fromConfig(raw: Record<string, unknown>, name = ''): FormState {
   const d = DEFAULT_FORM;
   const {
     url, viewport, deviceScaleFactor, fps, format, outputSize, scroll, introDuration, outroDuration,
-    hideSelectors, scrollDriver, lenisPath, scrollHook, injectCss, warmup, prepass, maxDuration, browser, output,
+    hideSelectors, actions, scrollDriver, lenisPath, scrollHook, injectCss, warmup, prepass, maxDuration, browser, output,
     ...extra
   } = raw;
   void output; // the app names files itself
@@ -144,6 +166,7 @@ export function fromConfig(raw: Record<string, unknown>, name = ''): FormState {
     introDuration: num(introDuration, d.introDuration),
     outroDuration: num(outroDuration, d.outroDuration),
     hideSelectors: Array.isArray(hideSelectors) ? hideSelectors.join('\n') : '',
+    actions: Array.isArray(actions) ? actions.filter((a) => a && typeof a === 'object').map(toFormAction) : [],
     scrollDriver: (['auto', 'native', 'lenis', 'custom'].includes(scrollDriver as string) ? scrollDriver : 'auto') as FormState['scrollDriver'],
     lenisPath: str(lenisPath, d.lenisPath),
     scrollHook: str(scrollHook, ''),
@@ -154,6 +177,17 @@ export function fromConfig(raw: Record<string, unknown>, name = ''): FormState {
     browser: (['chromium', 'chrome', 'msedge'].includes(browser as string) ? browser : 'chromium') as FormState['browser'],
     outputWidth: os ? String(os.width) : '',
     outputHeight: os ? String(os.height) : '',
+    extra,
+  };
+}
+
+function toFormAction(raw: Record<string, unknown>): FormAction {
+  const { type, selector, text, duration, ...extra } = raw;
+  return {
+    type: type === 'click' ? 'click' : 'hover',
+    selector: str(selector, ''),
+    text: str(text, ''),
+    duration: num(duration, 1.5),
     extra,
   };
 }

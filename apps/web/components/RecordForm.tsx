@@ -1,8 +1,9 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { EASING_NAMES, PRESETS } from '@glide/core/options';
-import { DEFAULT_FORM, estimateDuration, fromConfig, toConfig, type FormState, type ViewportMode } from '@/lib/form';
+import { DEFAULT_FORM, estimateDuration, fromConfig, toConfig, type FormAction, type FormState, type ViewportMode } from '@/lib/form';
 import type { Project } from '@/lib/types';
+import { Picker } from './Picker';
 
 const COMMON_HIDE = [
   { label: 'Cookiebot', sel: '#CybotCookiebotDialog' },
@@ -46,6 +47,13 @@ export function RecordForm(p: Props) {
   const [json, setJson] = useState('');
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [jsonOpen, setJsonOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const pickButton = (
+    <button type="button" className="btn ghost small pick-btn" disabled={!f.url.trim()} onClick={() => setPickerOpen(true)}
+      title={f.url.trim() ? undefined : 'Zuerst eine URL eingeben'}>
+      ◎ In der Vorschau auswählen
+    </button>
+  );
 
   useEffect(() => {
     if (jsonOpen) setJson(JSON.stringify(toConfig(f), null, 2));
@@ -160,6 +168,7 @@ export function RecordForm(p: Props) {
       </Group>
 
       <Group title="Ausblenden">
+        {pickButton}
         <div className="chips">
           {COMMON_HIDE.map((c) => (
             <button
@@ -177,6 +186,11 @@ export function RecordForm(p: Props) {
           <span>CSS-Selektoren <em>einer pro Zeile</em></span>
           <textarea rows={2} placeholder="#cookie-banner" value={f.hideSelectors} onChange={(e) => set('hideSelectors', e.target.value)} />
         </label>
+      </Group>
+
+      <Group title="Hover & Klicks">
+        {pickButton}
+        <ActionList actions={f.actions} onChange={(a) => set('actions', a)} />
       </Group>
 
       <Group title="Ausgabe">
@@ -293,6 +307,8 @@ export function RecordForm(p: Props) {
         </div>
       </details>
 
+      {pickerOpen && <Picker form={f} setForm={setForm} onClose={() => setPickerOpen(false)} />}
+
       {p.error && <p className="error" role="alert">{p.error}</p>}
 
       <div className="form-actions">
@@ -348,6 +364,48 @@ function ProjectPicker(p: Props) {
         </button>
       )}
     </div>
+  );
+}
+
+function ActionList({ actions, onChange }: { actions: FormAction[]; onChange: (a: FormAction[]) => void }) {
+  const update = (i: number, patch: Partial<FormAction>) =>
+    onChange(actions.map((a, j) => (j === i ? { ...a, ...patch } : a)));
+  const add = (type: FormAction['type']) =>
+    onChange([...actions, { type, selector: '', text: '', duration: type === 'click' ? 2 : 1.5, extra: {} }]);
+  return (
+    <>
+      {actions.length > 0 && (
+        <ol className="actions">
+          {actions.map((a, i) => (
+            <li key={i} className="action">
+              <select aria-label="Aktion" value={a.type} onChange={(e) => update(i, { type: e.target.value as FormAction['type'] })}>
+                <option value="hover">Hover</option>
+                <option value="click">Klick</option>
+              </select>
+              <input aria-label="CSS-Selektor" className="mono" placeholder=".button-primary" value={a.selector}
+                onChange={(e) => update(i, { selector: e.target.value })} />
+              <input aria-label="Text (optional)" placeholder="Text (optional)" value={a.text}
+                onChange={(e) => update(i, { text: e.target.value })} />
+              <div className="input-unit">
+                <input aria-label="Dauer" type="number" min={0} step={0.5} value={a.duration}
+                  onChange={(e) => update(i, { duration: e.target.value === '' ? 0 : Number(e.target.value) })} />
+                <span>s</span>
+              </div>
+              <button type="button" className="btn ghost small danger" aria-label="Entfernen"
+                onClick={() => onChange(actions.filter((_, j) => j !== i))}>✕</button>
+            </li>
+          ))}
+        </ol>
+      )}
+      <div className="row-buttons">
+        <button type="button" className="btn ghost small" onClick={() => add('hover')}>+ Hover</button>
+        <button type="button" className="btn ghost small" onClick={() => add('click')}>+ Klick</button>
+      </div>
+      <p className="hint">
+        Das Scrollen hält an jedem Element an, ein Cursor fährt hin und hovert oder klickt. Reihenfolge: von oben nach unten.
+        Links und Formulare öffnen keine neue Seite. Mit „Text“ wählst du unter mehreren Treffern das Element mit diesem Text.
+      </p>
+    </>
   );
 }
 

@@ -1,11 +1,12 @@
 import { existsSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { chromium, devices, type Browser, type CDPSession, type Page } from 'playwright';
+import { chromium, devices, type Browser, type BrowserContext, type CDPSession, type Page } from 'playwright';
 import { resolveOutputSize, resolveViewport, type Config } from './config.js';
 import { checkFfmpeg, FrameEncoder } from './ffmpeg.js';
+import { ActionPlayer, resolveActions, type ResolvedAction } from './actions.js';
 import { installGlideRuntime } from './page/runtime.js';
-import { buildTimeline, frameCount, scrollAt, type Timeline } from './timeline.js';
+import { buildTimeline, frameCount, scrollAt, segmentAt, type Timeline } from './timeline.js';
 
 export const AUTO_SECTION_SELECTOR = 'body > header, header, section, footer, [data-glide-section]';
 
@@ -36,7 +37,7 @@ export class RecordAbortedError extends Error {
 export interface Progress {
   frame: number;
   total: number;
-  phase: 'intro' | 'scroll';
+  phase: 'intro' | 'scroll' | 'action';
   elapsedMs: number;
 }
 
@@ -51,6 +52,8 @@ export interface RecordResult {
   renderMs: number;
   /** per-frame scrollY reported by the page */
   scrollPositions: number[];
+  /** actions that were found on the page, in timeline order (`Segment.action` indexes this) */
+  actions: ResolvedAction[];
   probes: unknown[];
 }
 
@@ -76,9 +79,8 @@ export async function record(config: Config, opts: RecordOptions): Promise<Recor
   const encoderName = config.format === 'mp4' ? 'libx264' : 'libvpx-vp9';
   const ffmpeg = await checkFfmpeg(encoderName);
 
-  const vp = resolveViewport(config);
   const out = resolveOutputSize(config);
-  const isMobile = vp.preset === 'mobile' || vp.width < 600;
+  const isMobile = isMobileViewport(config);
 
   const signal = opts.signal;
   const throwIfAborted = () => {
@@ -86,33 +88,13 @@ export async function record(config: Config, opts: RecordOptions): Promise<Recor
   };
   throwIfAborted();
 
-  const browser: Browser = await chromium.launch({
-    headless: !config.headful,
-    channel: config.browser === 'chromium' ? undefined : config.browser,
-    args: [
-      '--hide-scrollbars',
-      '--force-color-profile=srgb',
-      '--disable-renderer-backgrounding',
-      '--disable-background-timer-throttling',
-      '--disable-backgrounding-occluded-windows',
-      '--autoplay-policy=no-user-gesture-required',
-    ],
-  });
+  const browser = await launchBrowser(config);
   let encoder: FrameEncoder | null = null;
   // closing the browser interrupts whatever Playwright call is pending
   const onAbort = () => { void browser.close().catch(() => {}); };
   signal?.addEventListener('abort', onAbort, { once: true });
   try {
-    const context = await browser.newContext({
-      viewport: { width: vp.width, height: vp.height },
-      deviceScaleFactor: config.deviceScaleFactor,
-      isMobile,
-      hasTouch: isMobile,
-      userAgent: config.userAgent ?? (isMobile ? devices['iPhone 14'].userAgent : undefined),
-      reducedMotion: 'no-preference',
-      colorScheme: config.colorScheme ?? null,
-      extraHTTPHeaders: config.headers,
-    });
+    const context = await newContext(browser, config);
     // Serialized manually: dev runners (tsx/esbuild) may wrap functions in a
     // `__name` helper that does not exist inside the page.
     await context.addInitScript({
@@ -157,6 +139,16 @@ export async function record(config: Config, opts: RecordOptions): Promise<Recor
     const driver = await selectDriver(page, config, warn);
     log(`Scroll driver: ${driver}`);
 
+    // Clicks must not leave the page: links and forms keep their JS handlers,
+    // but the browser's default navigation is cancelled.
+    let navigatedTo: string | null = null;
+    if (config.actions.length) {
+      await page.evaluate(() => window.__glide.setBlockNavigation(true));
+      page.on('domcontentloaded', () => { navigatedTo ??= page.url(); });
+    }
+    const cursorStyle = config.cursor.style === 'auto' ? (isMobile ? 'touch' : 'arrow') : config.cursor.style;
+    const player = new ActionPlayer(page, cursorStyle, config.cursor.size, warn);
+
     if (config.warmup > 0) {
       await page.evaluate((ms) => window.__glide.advance(ms), config.warmup * 1000);
     }
@@ -183,6 +175,9 @@ export async function record(config: Config, opts: RecordOptions): Promise<Recor
     let lastPreview = 0;
     const shoot = async (y: number, total: number, phase: Progress['phase']) => {
       throwIfAborted();
+      if (navigatedTo !== null) {
+        throw new Error(`an action navigated away from the page (${navigatedTo}). Pick an element that does not open a new page.`);
+      }
       const actualY = await page.evaluate(
         ([y, dt, to]) => window.__glide.frame(y, dt, to) as Promise<number>,
         [y, frame === 0 ? 0 : dt, config.imageTimeout] as const,
@@ -212,7 +207,7 @@ export async function record(config: Config, opts: RecordOptions): Promise<Recor
     // ---- intro: stay at the top --------------------------------------------
     const introFrames = Math.round(config.introDuration * config.fps);
     const estimate = async () => {
-      const tl = await planTimeline(page, config, 0);
+      const tl = await planTimeline(page, config, 0, await resolveActions(page, config, () => {}));
       return introFrames + frameCount(tl, config.fps);
     };
     let total = Math.max(1, await estimate());
@@ -222,7 +217,8 @@ export async function record(config: Config, opts: RecordOptions): Promise<Recor
     }
 
     // ---- scroll + outro: measure now (pins, lazy content have settled) ------
-    const timeline = await planTimeline(page, config, 0);
+    const actions = await resolveActions(page, config, warn);
+    const timeline = await planTimeline(page, config, 0, actions);
     if (timeline.compressedBy) {
       warn(`timeline exceeds maxDuration (${config.maxDuration}s): scrolling ${(1 / timeline.compressedBy).toFixed(2)}× faster`);
     }
@@ -231,7 +227,14 @@ export async function record(config: Config, opts: RecordOptions): Promise<Recor
     const rest = frameCount(timeline, config.fps);
     total = introFrames + rest;
     for (let i = 0; i < rest; i++) {
-      await shoot(scrollAt(timeline, i / config.fps), total, 'scroll');
+      const t = i / config.fps;
+      const at = segmentAt(timeline, t);
+      if (at?.segment.kind === 'action') {
+        await player.step(at.index, actions[at.segment.action], at.elapsed);
+      } else if (actions.length) {
+        await player.idle(1 / config.fps);
+      }
+      await shoot(scrollAt(timeline, t), total, at?.segment.kind === 'action' ? 'action' : 'scroll');
     }
 
     throwIfAborted();
@@ -247,6 +250,7 @@ export async function record(config: Config, opts: RecordOptions): Promise<Recor
       timelineFrozen,
       renderMs: Date.now() - started,
       scrollPositions,
+      actions,
       probes,
     };
   } catch (e) {
@@ -262,6 +266,41 @@ export async function record(config: Config, opts: RecordOptions): Promise<Recor
     encoder?.abort();
     await browser.close().catch(() => {});
   }
+}
+
+export const isMobileViewport = (c: Config) => {
+  const vp = resolveViewport(c);
+  return vp.preset === 'mobile' || vp.width < 600;
+};
+
+export function launchBrowser(c: Config): Promise<Browser> {
+  return chromium.launch({
+    headless: !c.headful,
+    channel: c.browser === 'chromium' ? undefined : c.browser,
+    args: [
+      '--hide-scrollbars',
+      '--force-color-profile=srgb',
+      '--disable-renderer-backgrounding',
+      '--disable-background-timer-throttling',
+      '--disable-backgrounding-occluded-windows',
+      '--autoplay-policy=no-user-gesture-required',
+    ],
+  });
+}
+
+export function newContext(browser: Browser, c: Config, deviceScaleFactor = c.deviceScaleFactor): Promise<BrowserContext> {
+  const vp = resolveViewport(c);
+  const isMobile = isMobileViewport(c);
+  return browser.newContext({
+    viewport: { width: vp.width, height: vp.height },
+    deviceScaleFactor,
+    isMobile,
+    hasTouch: isMobile,
+    userAgent: c.userAgent ?? (isMobile ? devices['iPhone 14'].userAgent : undefined),
+    reducedMotion: 'no-preference',
+    colorScheme: c.colorScheme ?? null,
+    extraHTTPHeaders: c.headers,
+  });
 }
 
 async function freezeTimeline(cdp: CDPSession): Promise<boolean> {
@@ -338,7 +377,7 @@ async function selectDriver(page: Page, c: Config, warn: (m: string) => void): P
   return kind;
 }
 
-async function planTimeline(page: Page, c: Config, introDuration: number): Promise<Timeline> {
+async function planTimeline(page: Page, c: Config, introDuration: number, actions: ResolvedAction[]): Promise<Timeline> {
   const maxScroll = await page.evaluate(() => window.__glide.getMaxScroll() as number);
   const vh = await page.evaluate(() => window.innerHeight);
   let stops: number[] | undefined;
@@ -365,11 +404,13 @@ async function planTimeline(page: Page, c: Config, introDuration: number): Promi
     maxDuration: Math.max(1, c.maxDuration - c.introDuration),
     stops,
     minStopDistance: vh * 0.3,
+    actions: actions.map((a) => ({ y: a.y, duration: a.total })),
   });
 }
 
 function describeTimeline(tl: Timeline, intro: number, maxScroll: number): string {
   const stops = tl.segments.filter((s) => s.kind === 'move').map((s) => Math.round((s as { to: number }).to));
   const kind = stops.length > 1 ? `${stops.length} stops at ${[0, ...stops].join(', ')} px` : `0 → ${Math.round(maxScroll)} px`;
-  return `Timeline: ${(intro + tl.duration).toFixed(1)} s (intro ${intro}s), ${kind}`;
+  const actions = tl.segments.filter((s) => s.kind === 'action').length;
+  return `Timeline: ${(intro + tl.duration).toFixed(1)} s (intro ${intro}s), ${kind}${actions ? `, ${actions} action(s)` : ''}`;
 }

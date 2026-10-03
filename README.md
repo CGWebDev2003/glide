@@ -42,7 +42,8 @@ npm run dev        # Entwicklungsmodus mit Hot Reload (ohne Service Worker)
 
 Die App läuft lokal auf deinem Rechner, gerendert wird dort ebenfalls. Es gibt keine Server- oder Cloudkosten.
 
-- **Aufnehmen**: URL eingeben, Gerät, Scroll-Modus, Tempo, Intro/Outro und auszublendende Elemente wählen. Für gängige Cookie-Banner und Chat-Widgets gibt es Ein-Klick-Chips. Seltene Optionen stehen unter „Erweitert“.
+- **Aufnehmen**: URL eingeben, Gerät, Scroll-Modus, Tempo, Intro/Outro, Hover & Klicks und auszublendende Elemente wählen. Für gängige Cookie-Banner und Chat-Widgets gibt es Ein-Klick-Chips. Seltene Optionen stehen unter „Erweitert“.
+- **In der Vorschau auswählen**: öffnet die Seite live im Aufnahme-Viewport. Statt Selektoren einzutippen, zeigst du auf ein Element und klickst es an: als **Hover**, als **Klick** oder zum **Ausblenden** (Cookie-Banner, Chat-Widgets). Mehr unter [Elemente in der Vorschau auswählen](#elemente-in-der-vorschau-auswählen).
 - **Live-Fortschritt**: „Frame x von y“, Render-Geschwindigkeit, Restzeit und alle ~0,5 s ein Vorschaubild des aktuellen Frames. Aufnahmen landen in einer Warteschlange und laufen nacheinander. Eine laufende Aufnahme lässt sich abbrechen.
 - **Videos**: Galerie mit Poster-Bild, Player, Download, „Erneut“ (lädt die Einstellungen zurück ins Formular) und Löschen. Auf dem Handy kann der Player das Video direkt teilen.
 - **Projekte**: Einstellungen pro Kunde speichern und wieder laden.
@@ -95,6 +96,7 @@ npm link -w glide              # stellt `glide` global bereit (einmalig)
 # Schnelltest ohne Config
 glide record --url https://kunde.de --preset mobile
 glide record --url https://kunde.de --mode sections --pause 1.5 --hide "#cookie-banner"
+glide record --url https://kunde.de --hover ".pricing-card.featured" --click ".faq-item button"
 
 # reproduzierbar mit Config (Pfade relativ zur Config-Datei)
 glide init kunde.json --url https://kunde.de
@@ -119,6 +121,8 @@ Mit `--debug-frames <dir>` wird zusätzlich jeder 30. Frame als Bild gespeichert
 | `--intro`, `--outro` | Standzeit oben/unten in Sekunden |
 | `--driver` | `auto`, `native`, `lenis`, `custom` |
 | `--hide <sel...>` | Elemente ausblenden |
+| `--hover <sel...>`, `--click <sel...>` | Elemente hovern bzw. anklicken (siehe [Hover & Klicks](#hover--klicks)) |
+| `--cursor` | `auto`, `arrow`, `touch`, `none` |
 | `--no-prepass` | Lazy-Loading-Vorlauf überspringen |
 | `--max-duration` | Sicherheitsgrenze in Sekunden |
 | `--browser` | `chromium` (Standard), `chrome`, `msedge` |
@@ -180,6 +184,8 @@ In der Web-App lassen sich dieselben Dateien unter „Config als JSON → Datei 
 | `scrollDriver` | `"auto"` | `auto`: Lenis, wenn gefunden, sonst nativ; `native`, `lenis`, `custom` |
 | `lenisPath` | `"lenis"` | Pfad auf `window` zur Lenis-Instanz, z. B. `"app.lenis"` |
 | `scrollHook` | – | für `custom`: JS-Funktion als String, `"(y) => { … }"`, darf async sein |
+| `actions` | `[]` | Hover & Klicks, siehe unten |
+| `cursor.style` / `cursor.size` | `"auto"` / `28` | sichtbarer Cursor bei Aktionen: `auto` (Pfeil, auf Mobil-Viewports ein Touch-Punkt), `arrow`, `touch`, `none`; Größe in CSS-px |
 | `hideSelectors` | `[]` | werden per injiziertem CSS mit `display:none !important` ausgeblendet, auch wenn sie später erscheinen |
 | `injectCss` / `injectScript` | – | eigenes CSS bzw. JS (Funktionskörper, async erlaubt), läuft nach dem Laden |
 | `hideScrollbar` | `true` | Scrollbar ausblenden |
@@ -192,6 +198,48 @@ In der Web-App lassen sich dieselben Dateien unter „Config als JSON → Datei 
 | `browser` | `"chromium"` | `chrome`/`msedge` nutzen ein installiertes Chrome/Edge. Nötig, wenn die Seite H.264/AAC-Videos abspielt, denn das Playwright-Chromium hat keine proprietären Codecs |
 | `colorScheme`, `userAgent`, `headers`, `timeout`, `headful` | | Browser-Optionen |
 
+## Hover & Klicks
+
+Mit `actions` hovert oder klickt Glide Elemente im Video, z. B. eine Pricing-Karte, ein FAQ-Akkordeon oder ein Menü:
+
+```json
+"actions": [
+  { "type": "hover", "selector": ".pricing-card:nth-child(2)", "duration": 1.5 },
+  { "type": "click", "selector": ".faq button", "text": "Wie lange dauert", "duration": 2 }
+]
+```
+
+| Feld | Default | Beschreibung |
+|---|---|---|
+| `type` | – | `hover` oder `click` |
+| `selector` | – | CSS-Selektor. Es zählt der erste sichtbare Treffer |
+| `text` | – | nur Treffer, deren Text das enthält (Groß/Klein egal). So wählst du unter mehreren gleichen Buttons einen aus |
+| `duration` | `1.5` | Sekunden auf dem Element nach dem Ankommen (bei `click`: inklusive Klick) |
+| `moveDuration` | `0.7` | Sekunden, die der Cursor zum Element braucht |
+
+So läuft es ab:
+
+- Die Aktionen laufen **von oben nach unten**, unabhängig von der Reihenfolge in der Config. Das Scrollen hält an jedem Element an, das Element steht dann in der Bildmitte. Elemente, die schon gemeinsam im Bild sind, teilen sich einen Stopp, der Cursor fährt dann direkt weiter. Im `sections`-Modus ersetzt ein Aktions-Stopp eine Section in der Nähe.
+- Hover und Klick laufen als **echte Mausereignisse** durch Chromium: `:hover`, `mouseenter` und Klick-Handler greifen wie im echten Browser, und die ausgelösten Transitions laufen auf der virtuellen Zeit, sind also Frame für Frame flüssig.
+- Ein **Cursor** wird ins Bild gezeichnet (Headless-Browser haben keinen). Er blendet neben dem Element ein, gleitet hin, „drückt“ beim Klick und blendet aus, sobald wieder gescrollt wird. Dabei verlässt auch die Maus die Seite, damit beim Weiterscrollen nichts anderes gehovert wird.
+- **Links und Formulare öffnen keine neue Seite**: Ihre JS-Handler laufen, die Navigation des Browsers wird aber verhindert (auch Sprünge zu `#anker`, die dem Scroll-Zeitplan in die Quere kämen). Lädt die Seite trotzdem neu (z. B. per `location.href` im Skript), bricht Glide mit einer Meldung ab.
+- Elemente, die nicht gefunden werden, werden mit einer Warnung übersprungen.
+- `maxDuration` verkürzt nur das Scrollen, Aktionen behalten ihre Dauer.
+
+### Elemente in der Vorschau auswählen
+
+In der Web-App (und Desktop-App) unter „Hover & Klicks“ oder „Ausblenden“ auf **„In der Vorschau auswählen“** klicken. Glide öffnet die Seite in einem Browser im Hintergrund, mit demselben Viewport, User-Agent und denselben ausgeblendeten Elementen wie die Aufnahme, und zeigt sie live an.
+
+- **Modus wählen**: *Hover*, *Klick* oder *Ausblenden*.
+- **Zeigen**: Das Element unter der Maus wird markiert und benannt. Die Vorschau zeigt dabei auch den echten Hover-Zustand der Seite. Auf dem Handy: wischen zum Scrollen, tippen zum Auswählen.
+- **Klicken** fügt das Element hinzu. Im Modus *Ausblenden* verschwindet es sofort aus der Vorschau.
+- **Größer / Kleiner** tauscht die letzte Auswahl gegen das Eltern- bzw. Kind-Element, **Rückgängig** entfernt sie.
+- Gewählte Hover & Klicks erscheinen nummeriert in der Vorschau. Rechts stehen alle Einträge, dort lassen sie sich auch wieder entfernen.
+
+Glide wählt dabei sinnvolle Ziele: Bei Hover/Klick das klickbare Element (Button, Link …) statt des Icons darin, beim Ausblenden die äußerste fixierte Ebene (das ganze Banner statt nur seines „OK“-Buttons). Der erzeugte Selektor ist eindeutig und möglichst robust: Er nutzt IDs, `data-testid` & Co. oder `aria-label`, sonst Tag plus sprechende Klassen (keine Hash-Klassen wie `css-1x2y3`, keine Zustandsklassen wie `active`), notfalls mit `:nth-of-type`. Er landet wie getippte Selektoren in der Config.
+
+In der Vorschau führen Klicks nie zu einer anderen Seite. Nach 3 Minuten ohne Aktivität schließt Glide den Vorschau-Browser. Es läuft immer nur eine Vorschau gleichzeitig.
+
 ## Ablauf einer Aufnahme
 
 1. Chromium (headless) starten. Vor jedem Seitenskript wird die Runtime injiziert (virtuelle Uhr), und die Animations-Timeline wird per CDP eingefroren.
@@ -199,8 +247,8 @@ In der Web-App lassen sich dieselben Dateien unter „Config als JSON → Datei 
 3. **Pre-Pass** (optional): einmal in Etappen durchscrollen, damit Lazy-Loading-Bilder im Cache landen, danach neu laden. Intro- und Once-Animationen starten dadurch frisch.
 4. Elemente ausblenden, CSS/JS injizieren, Scroll-Treiber wählen.
 5. **Intro**: oben stehen bleiben (`introDuration`).
-6. Erst jetzt werden Seitenhöhe und Section-Positionen gemessen (GSAP-Pins und nachgeladene Inhalte haben sich dann gesetzt), und der Scroll-Zeitplan wird gebaut.
-7. **Scrollen** (`continuous` oder `sections`), danach **Outro**.
+6. Erst jetzt werden Seitenhöhe, Section-Positionen und Aktions-Elemente gemessen (GSAP-Pins und nachgeladene Inhalte haben sich dann gesetzt), und der Scroll-Zeitplan wird gebaut.
+7. **Scrollen** (`continuous` oder `sections`) mit Stopps für Hover & Klicks, danach **Outro**.
 8. Jeder Frame: `__glide.frame(y, 1000/fps)` → `Page.captureScreenshot` (CDP) → per Pipe direkt in ffmpegs stdin (keine Einzelbilder auf der Platte).
 
 ## Architektur
@@ -211,7 +259,10 @@ npm-Workspaces-Monorepo:
 packages/core/            @glide/core: der Recorder (von CLI und Web-App genutzt)
   src/config.ts           Schema (zod), Presets, Output-Größe
   src/options.ts          browser-taugliche Konstanten für UIs (@glide/core/options)
-  src/timeline.ts         reiner Scroll-Zeitplan: hold/move-Segmente, Easing, Sections, maxDuration
+  src/timeline.ts         reiner Scroll-Zeitplan: hold/move/action-Segmente, Easing, Sections, maxDuration
+  src/actions.ts          Hover & Klicks: Elemente finden, Stopps wählen, Maus und Cursor pro Frame
+  src/picker.ts           Vorschau zum Auswählen (PickerSession): Screenshots, Element unter dem Zeiger
+  src/page/picker-runtime.ts  In-Page-Helfer der Vorschau: Zielwahl und Selektor-Erzeugung
   src/recorder.ts         Playwright-Ablauf, CDP, Treiberwahl, Frame-Loop, Abbruch, Live-Vorschau
   src/ffmpeg.ts           Prüfung, Encoder-Argumente, Streaming über stdin, Poster-Frames
   src/page/runtime.ts     In-Page-Runtime (virtuelle Zeit, Animationen, Videos, Scroll-Treiber)
@@ -222,6 +273,7 @@ apps/web/                 Next.js-App (App Router) + PWA
   app/api/events          Server-Sent Events: Job-Status live an alle offenen Fenster
   app/api/jobs, videos    Aufnahmen starten/abbrechen, Videos mit Range-Requests streamen, Poster
   app/api/projects        gespeicherte Projekte (projects.json)
+  app/api/picker          Vorschau zum Auswählen: Sitzung öffnen, Screenshots, Zeigen/Scrollen/Ausblenden
   components/             Formular, laufende Aufnahmen, Galerie, Player
   public/sw.js            Service Worker (App-Shell offline, /api nie gecacht)
 apps/desktop/             Electron-Hülle um die Web-App
@@ -283,6 +335,8 @@ Zustand aus der Seite und prüft:
 - ScrollTrigger `scrub:true` entspricht exakt der Scrollposition; `scrub:1` und der gepinnte horizontale Track bewegen sich kontinuierlich
 - `<video>` wird pro Frame um exakt 1/fps weitergeseekt
 - `hideSelectors` greift
+- Vorschau-Auswahl: Ausblenden wählt die äußerste fixierte Ebene, Klick den Button, IDs werden genutzt, erzeugte Selektoren finden dasselbe Element wieder, ausgeblendete Elemente verschwinden
+- Hover & Klicks (eigene Testseite `actions.html`): `:hover`-Transitions und Klick-Handler sind in Zwischenzuständen zu sehen, der Hover wandert von einem Element zum nächsten, das Scrollen steht während der Aktionen, ein Link-Klick navigiert nicht, der Cursor blendet ein und aus, fehlende Elemente werden übersprungen
 - **Determinismus**: zwei Aufnahmen sind Frame für Frame bitidentisch (`ffmpeg -f framemd5`; als Toleranz für Decoder-Rundung bei Videos auf der Seite ist > 40 dB PSNR erlaubt)
 
 Zusätzlich schreibt der Test Kontaktbögen (`packages/core/test/out/sheet-*.png`) zum Anschauen.

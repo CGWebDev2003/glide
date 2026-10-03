@@ -47,6 +47,9 @@ program
   .option('--outro <s>', 'seconds at the bottom at the end', num)
   .addOption(new Option('--driver <driver>', 'scroll driver').choices(['auto', 'native', 'lenis', 'custom']))
   .option('--hide <selector...>', 'CSS selectors to hide (cookie banners, chat widgets)')
+  .option('--hover <selector...>', 'elements to hover (scrolling stops at each)')
+  .option('--click <selector...>', 'elements to click (scrolling stops at each)')
+  .addOption(new Option('--cursor <style>', 'visible cursor during actions').choices(['auto', 'arrow', 'touch', 'none']))
   .option('--no-prepass', 'skip the lazy-loading pre-pass')
   .option('--max-duration <s>', 'safety cap for the video length', num)
   .addOption(new Option('--browser <name>', 'browser (chrome/msedge play H.264 videos)').choices(['chromium', 'chrome', 'msedge']))
@@ -84,6 +87,14 @@ program
     if (o.outro !== undefined) raw.outroDuration = o.outro;
     if (o.driver) raw.scrollDriver = o.driver;
     if (o.hide) raw.hideSelectors = [...(raw.hideSelectors ?? []), ...o.hide];
+    if (o.hover || o.click) {
+      raw.actions = [
+        ...(raw.actions ?? []),
+        ...(o.hover ?? []).map((selector: string) => ({ type: 'hover', selector })),
+        ...(o.click ?? []).map((selector: string) => ({ type: 'click', selector })),
+      ];
+    }
+    if (o.cursor) raw.cursor = { ...(raw.cursor ?? {}), style: o.cursor };
     if (o.prepass === false) raw.prepass = false;
     if (o.maxDuration !== undefined) raw.maxDuration = o.maxDuration;
     if (o.headful) raw.headful = true;

@@ -8,14 +8,17 @@
  *    scrub are captured in intermediate states (not just start/end)
  *  - two recordings of the same page are bit-identical (determinism)
  *  - frame extraction from the video (ffmpeg) for visual inspection
+ *  - hover/click actions: real :hover transitions and click handlers, scroll
+ *    halts during actions, links do not navigate, cursor fades in and out
  */
 import { execFileSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseConfig } from '../src/config.js';
+import { PickerSession } from '../src/picker.js';
 import { record, type RecordResult } from '../src/recorder.js';
-import { scrollAt } from '../src/timeline.js';
+import { scrollAt, segmentAt } from '../src/timeline.js';
 import { startServer } from './serve.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -132,6 +135,106 @@ function contactSheet(file: string, png: string, from: number, to: number, step:
     `select='between(n\\,${from}\\,${to})*not(mod(n-${from}\\,${step}))',scale=480:-1,tile=4x3`, '-frames:v', '1', png]);
 }
 
+const ACTION_PROBE = `(() => {
+  const sc = (s) => new DOMMatrix(getComputedStyle(document.querySelector(s)).transform).a;
+  const cur = document.getElementById('__glide-cursor');
+  return {
+    b1: sc('#b1'), b2: sc('#b2'),
+    acc: +getComputedStyle(document.querySelector('.acc-body')).opacity,
+    path: location.pathname, awayClicks: window.awayClicks,
+    cursor: cur ? +cur.style.opacity : 0,
+    hovered: Array.from(document.querySelectorAll(':hover')).map((e) => e.id).filter(Boolean).join(','),
+  };
+})()`;
+
+type ActionProbe = { b1: number; b2: number; acc: number; path: string; awayClicks: number; cursor: number; hovered: string };
+
+async function runActions(url: string) {
+  const warnings: string[] = [];
+  const fps = 30;
+  const config = parseConfig({
+    url,
+    viewport: { width: 1280, height: 720 },
+    deviceScaleFactor: 1,
+    fps,
+    introDuration: 0.5,
+    outroDuration: 0.5,
+    scroll: { speed: 1400 },
+    encoderPreset: 'veryfast',
+    actions: [
+      { type: 'click', selector: '.acc button', text: 'mehr erfahren', duration: 1 },
+      { type: 'hover', selector: '#b1', duration: 0.8 },
+      { type: 'hover', selector: '#b2', duration: 0.8 },
+      { type: 'click', selector: '#away', duration: 0.5 },
+      { type: 'hover', selector: '#does-not-exist' },
+    ],
+  });
+  const r = await record(config, {
+    output: path.join(outDir, 'e2e-actions.mp4'),
+    probe: ACTION_PROBE,
+    warn: (m) => { warnings.push(m); console.log(`  ⚠ ${m}`); },
+  });
+  console.log(`\n── actions: ${r.frames} frames, ${r.actions.length} actions`);
+  const p = r.probes as ActionProbe[];
+  const intro = Math.round(0.5 * fps);
+  const segs = r.scrollPositions.map((_, i) => (i < intro ? null : segmentAt(r.timeline, (i - intro) / fps)));
+  const norm = (v: number) => (v - 1) / 0.15;
+
+  check('missing element is skipped with a warning', r.actions.length === 4 && warnings.some((w) => w.includes('#does-not-exist')));
+  check('actions run top to bottom', r.actions.map((a) => a.selector).join(' ') === '#b1 #b2 .acc button #away');
+  check('#b1 and #b2 share one stop', r.actions[0].y === r.actions[1].y);
+  const actionFrames = segs.map((s, i) => (s?.segment.kind === 'action' ? i : -1)).filter((i) => i >= 0);
+  const still = actionFrames.every((i) => Math.abs(r.scrollPositions[i] - (segs[i]!.segment as { y: number }).y) <= 1);
+  check('scroll stands still during actions', actionFrames.length > 60 && still, `${actionFrames.length} action frames`);
+  const b1 = p.map((x) => norm(x.b1));
+  check(':hover transition captured mid-transition (#b1)', intermediate(b1) >= 6 && Math.max(...b1) > 0.99, `${intermediate(b1)} frames`);
+  const b1Peak = b1.findIndex((v) => v > 0.99);
+  check('hover moves on: #b1 transitions back when the cursor goes to #b2', intermediate(b1.slice(b1Peak)) >= 6, `${intermediate(b1.slice(b1Peak))} frames`);
+  const b2 = p.map((x) => norm(x.b2));
+  check('#b2 hovered after #b1', b2.findIndex((v) => v > 0.99) > b1Peak);
+  const acc = p.map((x) => x.acc);
+  check('click handler ran, opening transition captured', intermediate(acc) >= 8 && acc[acc.length - 1] === 1, `${intermediate(acc)} frames`);
+  check('link click reached the page but did not navigate', p.every((x) => x.path === '/actions.html') && p[p.length - 1].awayClicks === 1);
+  const cur = p.map((x) => x.cursor);
+  check('cursor hidden before actions and at the end, visible during them',
+    cur.slice(0, intro).every((c) => c === 0) && cur[cur.length - 1] === 0 && actionFrames.some((i) => cur[i] === 1) && intermediate(cur) >= 4);
+  check('nothing hovered while scrolling away', p.slice(-10).every((x) => x.hovered === ''), p[p.length - 1].hovered);
+}
+
+async function runPicker(url: string) {
+  console.log('\n── picker');
+  const s = await PickerSession.open(parseConfig({ url, viewport: { width: 1280, height: 720 } }));
+  try {
+    const center = (r: { x: number; y: number; width: number; height: number }) => [r.x + r.width / 2, r.y + r.height / 2] as const;
+    const picked = async (x: number, y: number, mode: 'hover' | 'click' | 'hide') => {
+      const r = await s.inspect(x, y, mode);
+      return r ? r.chain[r.start] : null;
+    };
+    // the "OK" button inside the fixed banner: hide picks the whole banner, click the button
+    const [ok] = await s.rects([{ selector: '.consent button' }]);
+    const hide = await picked(...center(ok!), 'hide');
+    check('hide mode picks the outermost fixed layer', hide?.selector === 'div.consent-wrap', hide?.selector);
+    const btn = await picked(...center(ok!), 'click');
+    check('click mode picks the button', !!btn?.label.startsWith('button'), btn?.selector);
+    await s.scroll(720);
+    await new Promise((r) => setTimeout(r, 300));
+    const [b1] = await s.rects([{ selector: '#b1' }]);
+    check('ids are used when unique', (await picked(...center(b1!), 'hover'))?.selector === '#b1');
+    await s.scroll(720);
+    await new Promise((r) => setTimeout(r, 300));
+    const [more] = await s.rects([{ selector: '.acc button', text: 'mehr erfahren' }]);
+    const sel = (await picked(...center(more!), 'click'))?.selector ?? '';
+    const [again] = await s.rects([{ selector: sel }]);
+    check('generated selector finds the same element again', !!again && Math.abs(again.y - more!.y) < 1 && Math.abs(again.x - more!.x) < 1, sel);
+    await s.setHidden(['div.consent-wrap']);
+    const [gone] = await s.rects([{ selector: '.consent button' }]);
+    check('hidden elements disappear from the preview', gone === null);
+    check('preview screenshot', (await s.screenshot()).length > 1000);
+  } finally {
+    await s.close();
+  }
+}
+
 const { server, url } = await startServer();
 try {
   const a = await run(`${url}?lenis=0`, 'e2e-native', 'native');
@@ -152,6 +255,10 @@ try {
   check('deterministic: two recordings match frame by frame', ha.length === hc.length && minPsnr > 40,
     `${same}/${ha.length} frames bit-identical, worst PSNR ${minPsnr === Infinity ? '∞' : minPsnr.toFixed(1) + ' dB'}`);
   void c;
+
+  await runPicker(`${url}actions.html`);
+  await runActions(`${url}actions.html`);
+  contactSheet(path.join(outDir, 'e2e-actions.mp4'), path.join(outDir, 'sheet-actions.png'), 0, 400, 12);
 
   contactSheet(path.join(outDir, 'e2e-native.mp4'), path.join(outDir, 'sheet-intro.png'), 0, 44, 4);
   contactSheet(path.join(outDir, 'e2e-lenis.mp4'), path.join(outDir, 'sheet-scroll.png'), 50, 270, 20);

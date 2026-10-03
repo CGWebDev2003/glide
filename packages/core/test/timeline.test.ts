@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildTimeline, frameCount, normalizeStops, scrollAt } from '../src/timeline.js';
+import { buildTimeline, frameCount, normalizeStops, scrollAt, segmentAt } from '../src/timeline.js';
 import { parseConfig, resolveOutputSize, ConfigError } from '../src/config.js';
 import { encoderArgs } from '../src/ffmpeg.js';
 
@@ -70,4 +70,46 @@ test('config defaults, presets and even output size', () => {
 test('encoder args: H.264 yuv420p faststart', () => {
   const a = encoderArgs({ output: 'o.mp4', fps: 60, width: 1920, height: 1080, format: 'mp4', inputCodec: 'jpeg', crf: 16, preset: 'slow' });
   assert.ok(a.includes('libx264') && a.includes('yuv420p') && a.includes('+faststart'));
+});
+
+test('continuous with actions: stops at each action, sorted, intro/outro kept', () => {
+  const tl = buildTimeline({ ...base, actions: [{ y: 2000, duration: 2 }, { y: 600, duration: 1 }, { y: 600, duration: 1.5 }] });
+  const kinds = tl.segments.map((s) => (s.kind === 'action' ? `a${s.action}@${s.y}` : s.kind === 'move' ? `m${s.to}` : s.label));
+  assert.deepEqual(kinds, ['intro', 'm600', 'a1@600', 'a2@600', 'm2000', 'a0@2000', 'm3000', 'outro']);
+  assert.equal(tl.duration, 2 + 3000 / 600 + 1 + 1.5 + 2 + 1);
+  // scroll stands still during an action
+  const a = segmentAt(tl, 2 + 1 + 0.5)!;
+  assert.equal(a.segment.kind, 'action');
+  assert.equal(a.elapsed, 0.5);
+  assert.equal(scrollAt(tl, 2 + 1 + 0.5), 600);
+  assert.equal(scrollAt(tl, 2 + 1 + 2.4), 600);
+});
+
+test('actions at the top run right after the intro, actions are clamped', () => {
+  const tl = buildTimeline({ ...base, actions: [{ y: -40, duration: 1 }, { y: 9999, duration: 1 }] });
+  assert.deepEqual(tl.segments.map((s) => s.kind), ['hold', 'action', 'move', 'action', 'hold']);
+  assert.equal((tl.segments[3] as any).y, 3000);
+});
+
+test('sections with actions: nearby section stops give way to the action', () => {
+  const tl = buildTimeline({
+    ...base, mode: 'sections', stops: [1000, 2000], minStopDistance: 300, introDuration: 0, outroDuration: 0,
+    actions: [{ y: 1900, duration: 2 }],
+  });
+  const kinds = tl.segments.map((s) => (s.kind === 'move' ? `m${s.to}` : s.kind === 'action' ? `a@${s.y}` : 'pause'));
+  assert.deepEqual(kinds, ['m1000', 'pause', 'm1900', 'a@1900', 'm3000']);
+});
+
+test('maxDuration does not shorten actions', () => {
+  const tl = buildTimeline({ ...base, speed: 10, maxDuration: 20, actions: [{ y: 1500, duration: 4 }] });
+  assert.ok(Math.abs(tl.duration - 20) < 1e-9);
+  assert.equal(tl.segments.find((s) => s.kind === 'action')!.duration, 4);
+});
+
+test('actions config: defaults and validation', () => {
+  const c = parseConfig({ url: 'https://example.com', actions: [{ type: 'hover', selector: '.btn' }] });
+  assert.equal(c.actions[0].duration, 1.5);
+  assert.equal(c.actions[0].moveDuration, 0.7);
+  assert.equal(c.cursor.style, 'auto');
+  assert.throws(() => parseConfig({ url: 'https://example.com', actions: [{ type: 'drag', selector: 'a' }] }), ConfigError);
 });

@@ -298,6 +298,63 @@ export function installGlideRuntime(opts: { seed: number | null }): void {
     return Math.max(0, el.scrollHeight - window.innerHeight);
   };
 
+  // ---- actions: element lookup, cursor overlay, navigation guard --------------
+  const findTarget = (selector: string, text?: string): HTMLElement | null => {
+    let els: HTMLElement[];
+    try { els = Array.from(document.querySelectorAll(selector)) as HTMLElement[]; } catch { return null; }
+    const needle = text ? text.trim().toLowerCase().replace(/\s+/g, ' ') : '';
+    for (const el of els) {
+      const r = el.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) continue;
+      if (needle && !(el.textContent || '').toLowerCase().replace(/\s+/g, ' ').includes(needle)) continue;
+      return el;
+    }
+    return null;
+  };
+
+  let cursorEl: HTMLElement | null = null;
+  const CURSOR_ID = '__glide-cursor';
+  const ensureCursor = (style: string, size: number) => {
+    if (cursorEl && cursorEl.isConnected && cursorEl.dataset.style === style) return cursorEl;
+    cursorEl?.remove();
+    const el = document.createElement('div');
+    el.id = CURSOR_ID;
+    el.dataset.style = style;
+    el.setAttribute('aria-hidden', 'true');
+    el.style.cssText =
+      'all:initial;position:fixed;left:0;top:0;z-index:2147483647;pointer-events:none;' +
+      `width:${size}px;height:${size}px;opacity:0;will-change:transform,opacity;contain:strict;`;
+    if (style === 'touch') {
+      el.innerHTML =
+        '<div style="all:initial;display:block;box-sizing:border-box;width:100%;height:100%;border-radius:50%;' +
+        'background:rgba(255,255,255,.45);border:2px solid rgba(255,255,255,.9);' +
+        'box-shadow:0 0 0 1px rgba(0,0,0,.25),0 2px 8px rgba(0,0,0,.3)"></div>';
+    } else {
+      // classic arrow, tip at (0,0)
+      el.innerHTML =
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="100%" height="100%" style="display:block;overflow:visible">' +
+        '<path d="M2 1.5 L2 19.5 L6.6 15.2 L9.7 22.3 L13.1 20.8 L10 13.9 L16.4 13.9 Z" fill="#111" stroke="#fff" ' +
+        'stroke-width="1.6" stroke-linejoin="round" style="filter:drop-shadow(0 1.5px 2px rgba(0,0,0,.35))"/></svg>';
+    }
+    document.documentElement.appendChild(el);
+    cursorEl = el;
+    return el;
+  };
+
+  let blockNavigation = false;
+  const nativeOpen = window.open;
+  // Capture phase on window runs before page handlers, which still run (menus,
+  // tabs, accordions). Only the browser's default action is cancelled: leaving
+  // the page, and also hash jumps, which would fight the scroll timeline.
+  window.addEventListener('click', (e) => {
+    if (blockNavigation && (e.target as Element | null)?.closest?.('a[href]')) e.preventDefault();
+  }, true);
+  window.addEventListener('submit', (e) => { if (blockNavigation) e.preventDefault(); }, true);
+  w.open = function (...args: unknown[]) {
+    if (blockNavigation) return null;
+    return (nativeOpen as any).apply(window, args);
+  };
+
   // ---- public API (called from Node via page.evaluate) ----------------------
   w.__glide = {
     get now() { return now - startNow; },
@@ -334,6 +391,30 @@ export function installGlideRuntime(opts: { seed: number | null }): void {
       return window.scrollY;
     },
     getViewportHeight() { return window.innerHeight; },
+
+    /** Rect of an action target in viewport and document coordinates, or null if not found/visible. */
+    locate(selector: string, text?: string) {
+      const el = findTarget(selector, text);
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return {
+        x: r.left, y: r.top, width: r.width, height: r.height,
+        docY: r.top + w.__glide.getScrollY(),
+        vw: window.innerWidth, vh: window.innerHeight,
+      };
+    },
+    /** Draws the fake cursor (viewport px). The real mouse is moved from Node. */
+    cursor(c: { x: number; y: number; opacity: number; scale: number; style: string; size: number }) {
+      if (c.style === 'none') return;
+      if (c.opacity <= 0 && !cursorEl) return;
+      const el = ensureCursor(c.style, c.size);
+      // arrow: tip at the point; touch dot: centred
+      const off = c.style === 'touch' ? c.size / 2 : 0;
+      el.style.transformOrigin = c.style === 'touch' ? '50% 50%' : '0 0';
+      el.style.transform = `translate(${c.x - off}px, ${c.y - off}px) scale(${c.scale})`;
+      el.style.opacity = String(c.opacity);
+    },
+    setBlockNavigation(v: boolean) { blockNavigation = v; },
 
     /** Absolute top positions (document coordinates) of elements matching `selector`. */
     sectionTops(selector: string, minHeight: number) {
