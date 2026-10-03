@@ -59,6 +59,34 @@ Alles wird in **`~/Glide`** gespeichert: `videos/` (MP4/WebM + Poster), `project
 
 **Vom Handy aus**: Starte Glide mit `npm run app` und öffne `http://<IP-deines-Rechners>:4321` im selben WLAN. Bedienung und Downloads funktionieren. Installieren als PWA, Share Target und Benachrichtigungen verlangen aber HTTPS, über eine reine LAN-IP gehen sie also nicht. Dafür einen HTTPS-Tunnel verwenden, z. B. `tailscale serve 4321`. Achtung: Wer die Adresse kennt, kann Aufnahmen starten. Den Port daher nicht ungeschützt ins Internet stellen.
 
+## Desktop-App
+
+Dieselbe Web-App als eigenständiges Programm mit Icon im Dock/Startmenü. Beim Öffnen startet
+Glide seinen Server selbst im Hintergrund, beim Beenden stoppt er wieder. Ein Terminal oder
+`npm run app` ist nicht nötig.
+
+```bash
+npm run desktop:dist    # baut die App für dein Betriebssystem
+```
+
+Danach liegt in `apps/desktop/dist/` der Installer:
+
+- **macOS**: `Glide-….dmg` öffnen und Glide in „Programme“ ziehen
+- **Windows**: `Glide Setup ….exe` ausführen
+- **Linux**: `Glide-….AppImage` ausführbar machen und starten
+
+Gebaut wird immer für das System, auf dem du den Befehl ausführst (die Mac-App also auf dem Mac).
+Nach Änderungen am Code einfach erneut `npm run desktop:dist` ausführen und die App ersetzen.
+Zum Ausprobieren ohne Installer: `npm run desktop`.
+
+Hinweise:
+
+- **ffmpeg** und **Chromium** (`npx playwright install chromium`) müssen wie bisher installiert sein. Die App findet ffmpeg aus Homebrew auch ohne Terminal-PATH. `GLIDE_FFMPEG` und `GLIDE_DATA_DIR` gelten nur, wenn sie systemweit gesetzt sind.
+- Videos, Projekte und Verlauf liegen weiterhin in **`~/Glide`**, Web-App und Desktop-App teilen sie sich.
+- Läuft bereits `npm run app` auf Port 4321, öffnet die Desktop-App einfach diese Instanz. Ist der Port anderweitig belegt, nimmt sie einen freien.
+- Laufen beim Beenden noch Aufnahmen, fragt Glide vorher nach.
+- Die Mac-App ist nur ad-hoc signiert (ohne Apple-Entwicklerzertifikat). Selbst gebaut startet sie normal. Kopierst du sie auf einen anderen Mac, beim ersten Start Rechtsklick → „Öffnen“.
+
 ## CLI
 
 ```bash
@@ -196,6 +224,9 @@ apps/web/                 Next.js-App (App Router) + PWA
   app/api/projects        gespeicherte Projekte (projects.json)
   components/             Formular, laufende Aufnahmen, Galerie, Player
   public/sw.js            Service Worker (App-Shell offline, /api nie gecacht)
+apps/desktop/             Electron-Hülle um die Web-App
+  main.cjs                startet den gebündelten Server (Electron-eigenes Node.js) und öffnet das Fenster
+  scripts/prepare-server.mjs  baut die Web-App als Next.js-Standalone-Server nach bundle/server
 ```
 
 Die Web-App lädt `@glide/core` zur Laufzeit mit Nodes eigenem Modul-Loader statt über den Bundler (`lib/server/core.ts`). Playwright und die Runtime, die per `Function.prototype.toString` in die Seite injiziert wird, bleiben dadurch unverändert.

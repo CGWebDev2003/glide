@@ -5,7 +5,8 @@
   "workspaces": [
     "packages/core",
     "apps/cli",
-    "apps/web"
+    "apps/web",
+    "apps/desktop"
   ],
   "engines": {
     "node": ">=20.9"
@@ -17,6 +18,8 @@
     "test:e2e": "npm run test:e2e -w @glide/core",
     "app": "npm run build && npm run start -w @glide/web",
     "dev": "npm run build:core && npm run dev -w @glide/web",
-    "postinstall": "npm run build:core"
+    "postinstall": "npm run build:core",
+    "desktop": "npm run build -w @glide/desktop && npm run start -w @glide/desktop",
+    "desktop:dist": "npm run build -w @glide/desktop && npm run dist -w @glide/desktop"
   }
 }
