@@ -1,10 +1,10 @@
 {
-  "name": "scrollreel",
+  "name": "glide",
   "version": "0.1.0",
   "description": "Deterministic, frame-by-frame scroll video recorder for websites (virtual time + Playwright + ffmpeg).",
   "type": "module",
   "bin": {
-    "scrollreel": "dist/cli.js"
+    "glide": "dist/cli.js"
   },
   "files": [
     "dist"

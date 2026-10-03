@@ -9,7 +9,7 @@ import { record, type Progress } from './recorder.js';
 
 const program = new Command();
 program
-  .name('scrollreel')
+  .name('glide')
   .description('Record websites as perfectly smooth scroll videos (deterministic, frame by frame).')
   .version('0.1.0');
 
@@ -22,7 +22,7 @@ const num = (v: string) => {
 program
   .command('record')
   .description('record a video from a config file and/or CLI flags')
-  .argument('[config]', 'path to a scrollreel JSON config')
+  .argument('[config]', 'path to a glide JSON config')
   .option('-u, --url <url>', 'page URL (overrides config)')
   .option('-o, --out <file>', 'output file (.mp4 or .webm)')
   .addOption(new Option('-p, --preset <name>', 'viewport preset').choices(['desktop', 'laptop', 'mobile']))
@@ -91,7 +91,7 @@ program
     const size = resolveOutputSize(config);
     const quiet = !!o.quiet;
     const info = (m: string) => { if (!quiet) process.stderr.write(`${m}\n`); };
-    info(`scrollreel → ${path.relative(process.cwd(), output) || output}`);
+    info(`glide → ${path.relative(process.cwd(), output) || output}`);
     info(`  viewport ${vp.width}×${vp.height} @${config.deviceScaleFactor}x, video ${size.width}×${size.height}, ${config.fps} fps, ${config.format}`);
 
     const progress = createProgress(quiet);
@@ -113,7 +113,7 @@ program
 program
   .command('init')
   .description('write an example config file')
-  .argument('[file]', 'target file', 'scrollreel.json')
+  .argument('[file]', 'target file', 'glide.json')
   .option('-u, --url <url>', 'page URL', 'https://example.com')
   .action(async (file: string, o: { url: string }) => {
     const exists = await access(file).then(() => true, () => false);

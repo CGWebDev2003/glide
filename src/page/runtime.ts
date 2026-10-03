@@ -1,7 +1,7 @@
 /**
  * In-page runtime, injected via Playwright's `addInitScript` before any page
  * script runs. It replaces every time source the page can observe with a
- * virtual clock that only moves when the recorder calls `__scrollreel.frame()`.
+ * virtual clock that only moves when the recorder calls `__glide.frame()`.
  *
  * Patterns adopted from timesnap/timeweb (tungs):
  *  - override Date, Date.now, performance.now, requestAnimationFrame,
@@ -14,9 +14,9 @@
  * IMPORTANT: this function is serialized with Function.prototype.toString(),
  * so it must be fully self-contained (no imports, no outer references).
  */
-export function installScrollreelRuntime(opts: { seed: number | null }): void {
+export function installGlideRuntime(opts: { seed: number | null }): void {
   const w = window as any;
-  if (w.__scrollreel) return;
+  if (w.__glide) return;
 
   // ---- deterministic Math.random (mulberry32) -------------------------------
   if (opts && typeof opts.seed === 'number') {
@@ -105,7 +105,7 @@ export function installScrollreelRuntime(opts: { seed: number | null }): void {
         }
       }
       if (!next) break;
-      if (++guard > 100000) { console.warn('[scrollreel] timer loop guard hit'); break; }
+      if (++guard > 100000) { console.warn('[glide] timer loop guard hit'); break; }
       if (next.due > now) now = next.due;
       if (next.interval !== null) { next.due = now + next.interval; next.seq = timerSeq++; }
       else timers.delete(nextId);
@@ -288,7 +288,7 @@ export function installScrollreelRuntime(opts: { seed: number | null }): void {
   };
 
   // ---- public API (called from Node via page.evaluate) ----------------------
-  w.__scrollreel = {
+  w.__glide = {
     get now() { return now - startNow; },
     setTimelineFrozen(v: boolean) { timelineFrozen = v; },
     setSyncVideos(v: boolean) { syncVideos = v; },
@@ -368,7 +368,7 @@ export function installScrollreelRuntime(opts: { seed: number | null }): void {
       await waitForImages(imageTimeout);
       // a last style/layout flush so the screenshot shows the final state
       void document.documentElement.offsetHeight;
-      return w.__scrollreel.getScrollY();
+      return w.__glide.getScrollY();
     },
   };
 }

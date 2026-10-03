@@ -3,10 +3,10 @@ import path from 'node:path';
 import { chromium, devices, type Browser, type CDPSession, type Page } from 'playwright';
 import { resolveOutputSize, resolveViewport, type Config } from './config.js';
 import { checkFfmpeg, FrameEncoder } from './ffmpeg.js';
-import { installScrollreelRuntime } from './page/runtime.js';
+import { installGlideRuntime } from './page/runtime.js';
 import { buildTimeline, frameCount, scrollAt, type Timeline } from './timeline.js';
 
-export const AUTO_SECTION_SELECTOR = 'body > header, header, section, footer, [data-scrollreel-section]';
+export const AUTO_SECTION_SELECTOR = 'body > header, header, section, footer, [data-glide-section]';
 
 export interface RecordOptions {
   output: string;
@@ -43,7 +43,7 @@ export interface RecordResult {
 
 declare global {
   interface Window {
-    __scrollreel: any;
+    __glide: any;
   }
 }
 
@@ -86,7 +86,7 @@ export async function record(config: Config, opts: RecordOptions): Promise<Recor
     await context.addInitScript({
       content:
         `(() => { const __name = (f) => f; ` +
-        `(${installScrollreelRuntime.toString()})(${JSON.stringify({ seed: config.randomSeed })}); })();`,
+        `(${installGlideRuntime.toString()})(${JSON.stringify({ seed: config.randomSeed })}); })();`,
     });
     const page = await context.newPage();
     page.setDefaultTimeout(config.timeout);
@@ -107,7 +107,7 @@ export async function record(config: Config, opts: RecordOptions): Promise<Recor
       });
       await page.evaluate(() => document.fonts.ready.then(() => undefined));
       await freezeTimeline(cdp);
-      await page.evaluate((v) => window.__scrollreel.setTimelineFrozen(v), timelineFrozen);
+      await page.evaluate((v) => window.__glide.setTimelineFrozen(v), timelineFrozen);
     };
 
     log(`Loading ${config.url}`);
@@ -126,7 +126,7 @@ export async function record(config: Config, opts: RecordOptions): Promise<Recor
     log(`Scroll driver: ${driver}`);
 
     if (config.warmup > 0) {
-      await page.evaluate((ms) => window.__scrollreel.advance(ms), config.warmup * 1000);
+      await page.evaluate((ms) => window.__glide.advance(ms), config.warmup * 1000);
     }
 
     // ---- encoder -----------------------------------------------------------
@@ -150,7 +150,7 @@ export async function record(config: Config, opts: RecordOptions): Promise<Recor
     const probes: unknown[] = [];
     const shoot = async (y: number, total: number, phase: Progress['phase']) => {
       const actualY = await page.evaluate(
-        ([y, dt, to]) => window.__scrollreel.frame(y, dt, to) as Promise<number>,
+        ([y, dt, to]) => window.__glide.frame(y, dt, to) as Promise<number>,
         [y, frame === 0 ? 0 : dt, config.imageTimeout] as const,
       );
       scrollPositions.push(actualY);
@@ -188,7 +188,7 @@ export async function record(config: Config, opts: RecordOptions): Promise<Recor
     if (timeline.compressedBy) {
       warn(`timeline exceeds maxDuration (${config.maxDuration}s): scrolling ${(1 / timeline.compressedBy).toFixed(2)}× faster`);
     }
-    const maxScroll = await page.evaluate(() => window.__scrollreel.getMaxScroll() as number);
+    const maxScroll = await page.evaluate(() => window.__glide.getMaxScroll() as number);
     log(describeTimeline(timeline, config.introDuration, maxScroll));
     const rest = frameCount(timeline, config.fps);
     total = introFrames + rest;
@@ -217,7 +217,7 @@ export async function record(config: Config, opts: RecordOptions): Promise<Recor
 }
 
 async function freezeTimeline(cdp: CDPSession): Promise<boolean> {
-  if (process.env.SCROLLREEL_NO_CDP_FREEZE) return false; // debugging / comparison only
+  if (process.env.GLIDE_NO_CDP_FREEZE) return false; // debugging / comparison only
   try {
     await cdp.send('Animation.enable');
     await cdp.send('Animation.setPlaybackRate', { playbackRate: 0 });
@@ -260,13 +260,13 @@ async function prepass(page: Page, c: Config): Promise<void> {
   const vh = await page.evaluate(() => window.innerHeight);
   let y = 0;
   for (let guard = 0; guard < 500; guard++) {
-    const max = await page.evaluate(() => window.__scrollreel.getMaxScroll() as number);
-    await page.evaluate(([y]) => window.__scrollreel.frame(y, 100, 3000), [Math.min(y, max)] as const);
+    const max = await page.evaluate(() => window.__glide.getMaxScroll() as number);
+    await page.evaluate(([y]) => window.__glide.frame(y, 100, 3000), [Math.min(y, max)] as const);
     if (y >= max) break;
     y += vh * 0.7;
   }
   await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
-  await page.evaluate(() => window.__scrollreel.frame(0, 100, 3000));
+  await page.evaluate(() => window.__glide.frame(0, 100, 3000));
 }
 
 async function selectDriver(page: Page, c: Config, warn: (m: string) => void): Promise<string> {
@@ -274,15 +274,15 @@ async function selectDriver(page: Page, c: Config, warn: (m: string) => void): P
   if (c.scrollDriver === 'custom') kind = 'custom';
   else if (c.scrollDriver === 'native') kind = 'native';
   else {
-    const hasLenis = await page.evaluate((p) => window.__scrollreel.detectLenis(p) as boolean, c.lenisPath);
+    const hasLenis = await page.evaluate((p) => window.__glide.detectLenis(p) as boolean, c.lenisPath);
     if (hasLenis) kind = 'lenis';
     else if (c.scrollDriver === 'lenis') {
       throw new Error(`scrollDriver "lenis": no Lenis instance found at window.${c.lenisPath}. Expose it (window.lenis = lenis) or set "lenisPath".`);
-    } else if (await page.evaluate(() => window.__scrollreel.hasLenisMarkup() as boolean)) {
+    } else if (await page.evaluate(() => window.__glide.hasLenisMarkup() as boolean)) {
       warn(`page uses Lenis but window.${c.lenisPath} is not set - falling back to native scrolling. Expose the instance or set "lenisPath" for best results.`);
     }
   }
-  await page.evaluate((d) => window.__scrollreel.setDriver(d), {
+  await page.evaluate((d) => window.__glide.setDriver(d), {
     kind,
     lenisPath: c.lenisPath,
     hook: c.scrollHook,
@@ -291,7 +291,7 @@ async function selectDriver(page: Page, c: Config, warn: (m: string) => void): P
 }
 
 async function planTimeline(page: Page, c: Config, introDuration: number): Promise<Timeline> {
-  const maxScroll = await page.evaluate(() => window.__scrollreel.getMaxScroll() as number);
+  const maxScroll = await page.evaluate(() => window.__glide.getMaxScroll() as number);
   const vh = await page.evaluate(() => window.innerHeight);
   let stops: number[] | undefined;
   if (c.scroll.mode === 'sections') {
@@ -299,7 +299,7 @@ async function planTimeline(page: Page, c: Config, introDuration: number): Promi
       ? Array.isArray(c.scroll.sections) ? c.scroll.sections.join(',') : c.scroll.sections
       : AUTO_SECTION_SELECTOR;
     const tops = await page.evaluate(
-      ([sel, minH]) => window.__scrollreel.sectionTops(sel, minH) as number[],
+      ([sel, minH]) => window.__glide.sectionTops(sel, minH) as number[],
       [selector, c.scroll.sections ? 1 : vh * 0.25] as const,
     );
     stops = tops.map((t) => t - c.scroll.sectionOffset);

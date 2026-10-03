@@ -3,7 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 export class FfmpegError extends Error {}
 
 export function ffmpegBinary(): string {
-  return process.env.SCROLLREEL_FFMPEG || process.env.FFMPEG_PATH || 'ffmpeg';
+  return process.env.GLIDE_FFMPEG || process.env.FFMPEG_PATH || 'ffmpeg';
 }
 
 /** Throws a readable error when ffmpeg is missing or lacks the needed encoder. */
@@ -30,7 +30,7 @@ export async function checkFfmpeg(encoder: string): Promise<string> {
             '  macOS:          brew install ffmpeg',
             '  Ubuntu/Debian:  sudo apt install ffmpeg',
             '  Windows:        winget install Gyan.FFmpeg',
-            'Or point scrollreel to a binary: SCROLLREEL_FFMPEG=/path/to/ffmpeg',
+            'Or point glide to a binary: GLIDE_FFMPEG=/path/to/ffmpeg',
           ].join('\n')
         : `Could not run ffmpeg ("${bin}"): ${e.message}`;
     throw new FfmpegError(hint);
