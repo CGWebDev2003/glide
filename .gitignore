@@ -4,3 +4,4 @@ dist/
 *.webm
 .scrollreel/
 test/out/
+!test/site/clip.webm
