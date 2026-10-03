@@ -59,6 +59,7 @@ export async function record(config: Config, opts: RecordOptions): Promise<Recor
 
   const browser: Browser = await chromium.launch({
     headless: !config.headful,
+    channel: config.browser === 'chromium' ? undefined : config.browser,
     args: [
       '--hide-scrollbars',
       '--force-color-profile=srgb',
@@ -188,6 +189,7 @@ export async function record(config: Config, opts: RecordOptions): Promise<Recor
       warn(`timeline exceeds maxDuration (${config.maxDuration}s): scrolling ${(1 / timeline.compressedBy).toFixed(2)}× faster`);
     }
     const maxScroll = await page.evaluate(() => window.__scrollreel.getMaxScroll() as number);
+    log(describeTimeline(timeline, config.introDuration, maxScroll));
     const rest = frameCount(timeline, config.fps);
     total = introFrames + rest;
     for (let i = 0; i < rest; i++) {
@@ -316,4 +318,10 @@ async function planTimeline(page: Page, c: Config, introDuration: number): Promi
     stops,
     minStopDistance: vh * 0.3,
   });
+}
+
+function describeTimeline(tl: Timeline, intro: number, maxScroll: number): string {
+  const stops = tl.segments.filter((s) => s.kind === 'move').map((s) => Math.round((s as { to: number }).to));
+  const kind = stops.length > 1 ? `${stops.length} stops at ${[0, ...stops].join(', ')} px` : `0 → ${Math.round(maxScroll)} px`;
+  return `Timeline: ${(intro + tl.duration).toFixed(1)} s (intro ${intro}s), ${kind}`;
 }

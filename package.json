@@ -18,7 +18,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "tsx --test test/*.test.ts",
     "test:site": "tsx test/serve.ts",
-    "test:e2e": "tsx test/e2e.ts"
+    "test:e2e": "tsx test/e2e.ts",
+    "prepare": "tsc -p tsconfig.json"
   },
   "license": "MIT",
   "dependencies": {

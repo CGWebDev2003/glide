@@ -41,6 +41,7 @@ program
   .option('--hide <selector...>', 'CSS selectors to hide (cookie banners, chat widgets)')
   .option('--no-prepass', 'skip the lazy-loading pre-pass')
   .option('--max-duration <s>', 'safety cap for the video length', num)
+  .addOption(new Option('--browser <name>', 'browser (chrome/msedge play H.264 videos)').choices(['chromium', 'chrome', 'msedge']))
   .option('--headful', 'show the browser window')
   .option('--debug-frames <dir>', 'also save every 30th frame as an image into <dir>')
   .option('-q, --quiet', 'no progress output')
@@ -78,6 +79,7 @@ program
     if (o.prepass === false) raw.prepass = false;
     if (o.maxDuration !== undefined) raw.maxDuration = o.maxDuration;
     if (o.headful) raw.headful = true;
+    if (o.browser) raw.browser = o.browser;
 
     const config = parseConfig(raw, configPath ?? 'options');
     const output = path.resolve(

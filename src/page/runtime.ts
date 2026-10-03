@@ -227,6 +227,8 @@ export function installScrollreelRuntime(opts: { seed: number | null }): void {
       if (v.readyState < 1 || !Number.isFinite(v.duration) || v.duration <= 0) continue;
       let t = m.base + (now - m.birth) / 1000;
       t = v.loop ? t % v.duration : Math.min(t, v.duration);
+      // nudge past exact frame boundaries so the decoder picks the same frame every run
+      t = Math.min(t + 0.001, v.duration);
       if (Math.abs(v.currentTime - t) > 0.0005) pending.push(seek(v, t));
     }
     await Promise.all(pending);

@@ -1,0 +1,23 @@
+{
+  "url": "https://www.example.com",
+  "output": "kunde-desktop.mp4",
+  "viewport": "desktop",
+  "deviceScaleFactor": 2,
+  "fps": 60,
+  "format": "mp4",
+  "scroll": {
+    "mode": "sections",
+    "speed": 900,
+    "easing": "easeInOutCubic",
+    "pauseDuration": 1.2,
+    "sections": ["header", "main > section", "footer"],
+    "sectionOffset": 0
+  },
+  "introDuration": 2.5,
+  "outroDuration": 1.5,
+  "scrollDriver": "auto",
+  "lenisPath": "lenis",
+  "hideSelectors": ["#CybotCookiebotDialog", ".cky-consent-container", "#usercentrics-root", ".intercom-lightweight-app"],
+  "prepass": true,
+  "maxDuration": 90
+}

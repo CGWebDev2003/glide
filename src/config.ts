@@ -91,6 +91,8 @@ export const configSchema = z.object({
   colorScheme: z.enum(['light', 'dark', 'no-preference']).optional(),
   /** Seed for a deterministic Math.random (null = native random). */
   randomSeed: z.number().int().nullable().default(1337),
+  /** Browser: bundled Chromium, or an installed Chrome/Edge (needed for H.264/AAC videos on the page). */
+  browser: z.enum(['chromium', 'chrome', 'msedge']).default('chromium'),
   /** Run the browser with a visible window (debugging). */
   headful: z.boolean().default(false),
 });

@@ -13,7 +13,7 @@ const routes: Record<string, string> = {
   '/vendor/lenis/lenis.min.js': path.join(mods, 'lenis/dist/lenis.min.js'),
   '/vendor/lenis/lenis.css': path.join(mods, 'lenis/dist/lenis.css'),
 };
-const types: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
+const types: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.webm': 'video/webm' };
 const colors = ['#3a86ff', '#ff006e', '#06d6a0', '#ffbe0b', '#8338ec'];
 
 export function startServer(port = 0): Promise<{ server: Server; url: string }> {
@@ -32,7 +32,17 @@ export function startServer(port = 0): Promise<{ server: Server; url: string }> 
     const file = routes[url.pathname] ?? path.join(root, 'site', url.pathname === '/' ? 'index.html' : path.normalize(url.pathname));
     try {
       const body = await readFile(file);
-      res.writeHead(200, { 'content-type': types[path.extname(file)] ?? 'application/octet-stream' });
+      const type = types[path.extname(file)] ?? 'application/octet-stream';
+      // Range support: media elements can only seek with it
+      const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? '');
+      if (range) {
+        const start = range[1] ? Number(range[1]) : 0;
+        const end = range[2] ? Math.min(Number(range[2]), body.length - 1) : body.length - 1;
+        res.writeHead(206, { 'content-type': type, 'accept-ranges': 'bytes', 'content-range': `bytes ${start}-${end}/${body.length}`, 'content-length': end - start + 1 });
+        res.end(body.subarray(start, end + 1));
+        return;
+      }
+      res.writeHead(200, { 'content-type': type, 'accept-ranges': 'bytes' });
       res.end(body);
     } catch {
       res.writeHead(404).end('not found');
