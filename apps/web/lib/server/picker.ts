@@ -23,12 +23,19 @@ class PickerManager {
     return { id, width: session.width, height: session.height };
   }
 
-  /** Runs `fn` on the session (one call at a time, so pointer moves cannot overtake each other). */
-  async use<T>(id: string, fn: (s: PickerSession) => Promise<T>): Promise<T | null> {
+  /** The session, outside the queue (for frames, which must not wait behind pointer moves). */
+  get(id: string): PickerSession | null {
     const cur = this.current;
     if (!cur || cur.id !== id) return null;
     clearTimeout(cur.timer);
     cur.timer = setTimeout(() => void this.close(id), IDLE_MS);
+    return cur.session;
+  }
+
+  /** Runs `fn` on the session (one call at a time, so pointer moves cannot overtake each other). */
+  async use<T>(id: string, fn: (s: PickerSession) => Promise<T>): Promise<T | null> {
+    const cur = this.current;
+    if (!this.get(id) || !cur) return null;
     const run = cur.busy.then(() => fn(cur.session));
     cur.busy = run.catch(() => {});
     return run;

@@ -7,6 +7,8 @@ type Rect = { x: number; y: number; width: number; height: number };
 type Candidate = { selector: string; label: string; rect: Rect };
 type Inspect = { start: number; chain: Candidate[] };
 type Session = { id: string; width: number; height: number };
+/** a decoded preview frame and the action target rects measured for it */
+type Frame = { url: string; marks: (Rect | null)[] };
 /** the last pick, so it can be widened/narrowed to a parent/child element or undone */
 type LastPick = { kind: 'action' | 'hide'; selector: string; chain: Candidate[]; level: number };
 
@@ -26,17 +28,19 @@ const lines = (s: string) => s.split('\n').map((l) => l.trim()).filter(Boolean);
 export function Picker({ form, setForm, onClose }: { form: FormState; setForm: (f: FormState) => void; onClose: () => void }) {
   const [session, setSession] = useState<Session | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [frame, setFrame] = useState<string | null>(null);
+  const [frame, setFrame] = useState<Frame | null>(null);
   const [mode, setMode] = useState<Mode>('hover');
   const [hover, setHover] = useState<Inspect | null>(null);
-  const [marks, setMarks] = useState<(Rect | null)[]>([]);
   const [last, setLast] = useState<LastPick | null>(null);
   const [scale, setScale] = useState(1);
   const stage = useRef<HTMLDivElement>(null);
   const formRef = useRef(form);
   formRef.current = form;
-  const busy = useRef(false);
+  const scrolling = useRef(false);
   const pendingScroll = useRef(0);
+  const inspecting = useRef(false);
+  /** last mouse position over the preview (page pixels), inspected again after a scroll */
+  const pointer = useRef<{ x: number; y: number } | null>(null);
 
   const call = useCallback(async (body: object) => {
     if (!session) return null;
@@ -78,25 +82,36 @@ export function Picker({ form, setForm, onClose }: { form: FormState; setForm: (
     };
   }, []);
 
-  // frame loop: fetch the next screenshot as soon as the last one arrived
+  // frame loop: long-poll for the next frame; the server answers as soon as the page changed
   useEffect(() => {
     if (!session) return;
     let stop = false;
     let url: string | null = null;
     (async () => {
+      let seq = 0;
       while (!stop) {
         try {
-          const res = await fetch(`/api/picker/${session.id}/frame`, { cache: 'no-store' });
+          const res = await fetch(`/api/picker/${session.id}/frame?after=${seq}`, { cache: 'no-store' });
           if (res.status === 404) { setError('Die Vorschau wurde geschlossen (zu lange inaktiv). Bitte neu öffnen.'); return; }
-          if (res.ok) {
-            const next = URL.createObjectURL(await res.blob());
-            if (stop) { URL.revokeObjectURL(next); return; }
-            setFrame(next);
-            if (url) URL.revokeObjectURL(url);
-            url = next;
+          if (res.status !== 200) {
+            if (res.status !== 204) await new Promise((r) => setTimeout(r, 500));
+            continue;
           }
-        } catch { /* retry */ }
-        await new Promise((r) => setTimeout(r, 120));
+          seq = Number(res.headers.get('x-frame-seq')) || seq + 1;
+          let marks: (Rect | null)[] = [];
+          try { marks = JSON.parse(res.headers.get('x-frame-rects') ?? '[]'); } catch { /* keep none */ }
+          const next = URL.createObjectURL(await res.blob());
+          // decode before swapping, so the <img> never shows a half-loaded frame
+          const img = new Image();
+          img.src = next;
+          await img.decode().catch(() => {});
+          if (stop) { URL.revokeObjectURL(next); return; }
+          setFrame({ url: next, marks });
+          if (url) URL.revokeObjectURL(url);
+          url = next;
+        } catch {
+          await new Promise((r) => setTimeout(r, 500));
+        }
       }
     })();
     return () => {
@@ -105,21 +120,12 @@ export function Picker({ form, setForm, onClose }: { form: FormState; setForm: (
     };
   }, [session]);
 
-  // positions of the chosen actions (numbered boxes)
+  // the server measures the chosen actions with every frame (numbered boxes)
+  const targetsKey = JSON.stringify(form.actions.filter((a) => a.selector.trim()).map((a) => ({ selector: a.selector, text: a.text || undefined })));
   useEffect(() => {
     if (!session) return;
-    let stop = false;
-    const tick = async () => {
-      const targets = formRef.current.actions.filter((a) => a.selector.trim()).map((a) => ({ selector: a.selector, text: a.text || undefined }));
-      try {
-        const data = targets.length ? await call({ op: 'rects', targets }) : { rects: [] };
-        if (!stop) setMarks(data?.rects ?? []);
-      } catch { /* ignore */ }
-      if (!stop) setTimeout(tick, 400);
-    };
-    void tick();
-    return () => { stop = true; };
-  }, [session, call]);
+    void call({ op: 'targets', targets: JSON.parse(targetsKey) }).catch(() => {});
+  }, [session, call, targetsKey]);
 
   // scale between preview pixels and page pixels
   useEffect(() => {
@@ -148,15 +154,41 @@ export function Picker({ form, setForm, onClose }: { form: FormState; setForm: (
     return (data?.result ?? null) as Inspect | null;
   };
 
+  /** highlights the element under the mouse; moves during a request are merged into one follow-up */
+  const hoverAt = async (p: { x: number; y: number }) => {
+    pointer.current = p;
+    if (inspecting.current) return;
+    inspecting.current = true;
+    try {
+      let at: { x: number; y: number } | null;
+      do {
+        at = pointer.current;
+        if (!at) break;
+        const r = await inspect(at.x, at.y);
+        if (pointer.current) setHover(r);
+      } while (pointer.current && pointer.current !== at);
+    } catch { /* ignore */ }
+    inspecting.current = false;
+  };
+
+  /** sends the wheel/drag deltas collected meanwhile in one request */
   const flushScroll = async () => {
-    if (busy.current || !pendingScroll.current) return;
-    busy.current = true;
-    const dy = pendingScroll.current;
-    pendingScroll.current = 0;
-    try { await call({ op: 'scroll', dy }); } catch { /* ignore */ }
-    busy.current = false;
+    if (scrolling.current || !pendingScroll.current) return;
+    scrolling.current = true;
     setHover(null);
-    if (pendingScroll.current) void flushScroll();
+    try {
+      while (pendingScroll.current) {
+        const dy = pendingScroll.current;
+        pendingScroll.current = 0;
+        // at the mouse position, so the page keeps its hover state and inner scroll areas scroll
+        const at = pointer.current;
+        try { await call({ op: 'scroll', dy, ...at }); } catch { /* ignore */ }
+      }
+    } finally {
+      scrolling.current = false;
+    }
+    // the element under the mouse changed
+    if (pointer.current) void hoverAt(pointer.current);
   };
 
   // wheel must be non-passive to keep the app from scrolling
@@ -220,7 +252,7 @@ export function Picker({ form, setForm, onClose }: { form: FormState; setForm: (
 
   // pointer: mouse = hover to highlight, click to pick; touch = drag to scroll, tap to pick
   const drag = useRef<{ x: number; y: number; moved: number; id: number } | null>(null);
-  const onPointerMove = async (e: React.PointerEvent) => {
+  const onPointerMove = (e: React.PointerEvent) => {
     const d = drag.current;
     if (d && d.id === e.pointerId && e.pointerType !== 'mouse') {
       const dy = d.y - e.clientY;
@@ -231,11 +263,11 @@ export function Picker({ form, setForm, onClose }: { form: FormState; setForm: (
       void flushScroll();
       return;
     }
-    if (e.pointerType !== 'mouse' || busy.current) return;
-    busy.current = true;
-    const p = toPage(e);
-    try { setHover(await inspect(p.x, p.y)); } catch { /* ignore */ }
-    busy.current = false;
+    if (e.pointerType !== 'mouse' || scrolling.current) {
+      if (e.pointerType === 'mouse') pointer.current = toPage(e);
+      return;
+    }
+    void hoverAt(toPage(e));
   };
   const onPointerDown = (e: React.PointerEvent) => {
     drag.current = { x: e.clientX, y: e.clientY, moved: 0, id: e.pointerId };
@@ -287,11 +319,11 @@ export function Picker({ form, setForm, onClose }: { form: FormState; setForm: (
                 onPointerMove={onPointerMove}
                 onPointerDown={onPointerDown}
                 onPointerUp={onPointerUp}
-                onPointerLeave={() => { if (!drag.current) setHover(null); }}
+                onPointerLeave={() => { pointer.current = null; if (!drag.current) setHover(null); }}
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                {frame && <img src={frame} alt="Vorschau der Seite" draggable={false} />}
-                {marks.map((r, i) => r && (
+                {frame && <img src={frame.url} alt="Vorschau der Seite" draggable={false} decoding="sync" />}
+                {frame?.marks.map((r, i) => r && (
                   <div key={i} className="picker-mark" style={box(r)}><span>{i + 1}</span></div>
                 ))}
                 {hoverCandidate && (
