@@ -8,11 +8,20 @@ import { useJobs } from './useJobs';
 import { notify, NotificationToggle } from './notifications';
 
 const DRAFT_KEY = 'glide:draft';
+const PROJECT_KEY = 'glide:project';
 
 export function GlideApp({ sharedUrl }: { sharedUrl?: string }) {
   const [form, setFormState] = useState<FormState>(DEFAULT_FORM);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [projectId, setProjectId] = useState<string | null>(null);
+  const [projectId, setProjectIdState] = useState<string | null>(null);
+  // remembered like the draft, so a reload stays in the project
+  const setProjectId = useCallback((id: string | null) => {
+    setProjectIdState(id);
+    try {
+      if (id) localStorage.setItem(PROJECT_KEY, id);
+      else localStorage.removeItem(PROJECT_KEY);
+    } catch { /* ignore */ }
+  }, []);
   const [system, setSystem] = useState<SystemStatus | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,6 +41,9 @@ export function GlideApp({ sharedUrl }: { sharedUrl?: string }) {
       if (raw) draft = { ...DEFAULT_FORM, ...(JSON.parse(raw) as FormState) };
     } catch { /* storage unavailable */ }
     if (sharedUrl) draft = { ...draft, url: sharedUrl, name: '' };
+    else {
+      try { setProjectIdState(localStorage.getItem(PROJECT_KEY)); } catch { /* storage unavailable */ }
+    }
     setFormState(draft);
   }, [sharedUrl]);
 
@@ -52,19 +64,43 @@ export function GlideApp({ sharedUrl }: { sharedUrl?: string }) {
     void fetch('/api/system').then(async (r) => setSystem(await r.json()));
   }, [loadProjects]);
 
+  const current = projects.find((p) => p.id === projectId);
+  // compared as configs, so formatting differences (e.g. a missing https://) don't count
+  const configKey = (f: FormState) => JSON.stringify(toConfig({ ...f, url: normalizeUrl(f.url) }));
+  const projectDirty = !!current && configKey(form) !== configKey(fromConfig(current.config));
+
+  const saveProject = async (body: { id?: string; name: string; config: Record<string, unknown> }) => {
+    const res = await fetch('/api/projects', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? res.statusText);
+    await loadProjects();
+    return data as Project;
+  };
+
+  const createProject = async (name: string, config: Record<string, unknown>) => {
+    const saved = await saveProject({ name, config });
+    setProjectId(saved.id);
+    return saved;
+  };
+
   const submit = async () => {
     setSubmitting(true);
     setError(null);
     try {
       const f = { ...form, url: normalizeUrl(form.url) };
-      const project = projects.find((p) => p.id === projectId);
       const res = await fetch('/api/jobs', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ config: toConfig(f), name: project?.name || f.name || undefined, projectId: projectId ?? undefined }),
+        body: JSON.stringify({ config: toConfig(f), name: current?.name || f.name || undefined, projectId: current?.id }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? res.statusText);
+      // the project keeps the settings of its latest recording
+      if (current && projectDirty) void saveProject({ id: current.id, name: current.name, config: toConfig(f) }).catch(() => {});
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (e) {
       setError((e as Error).message);
@@ -106,15 +142,16 @@ export function GlideApp({ sharedUrl }: { sharedUrl?: string }) {
             projects={projects}
             projectId={projectId}
             setProjectId={setProjectId}
-            onSaveProject={async (name) => {
-              const res = await fetch('/api/projects', {
-                method: 'POST',
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ id: projects.find((p) => p.id === projectId && p.name === name)?.id, name, config: toConfig(form) }),
-              });
-              const saved = (await res.json()) as Project;
-              await loadProjects();
-              setProjectId(saved.id);
+            projectDirty={projectDirty}
+            onCreateProject={async (name) => {
+              await createProject(name, toConfig({ ...form, url: normalizeUrl(form.url) }));
+            }}
+            onSaveProject={async () => {
+              if (current) await saveProject({ id: current.id, name: current.name, config: toConfig({ ...form, url: normalizeUrl(form.url) }) });
+            }}
+            onRenameProject={async (id, name) => {
+              const p = projects.find((x) => x.id === id);
+              if (p) await saveProject({ id, name, config: p.config });
             }}
             onDeleteProject={async (id) => {
               await fetch(`/api/projects/${id}`, { method: 'DELETE' });
@@ -131,6 +168,11 @@ export function GlideApp({ sharedUrl }: { sharedUrl?: string }) {
           <Gallery
             jobs={jobs}
             projects={projects}
+            onCreateProject={async (name, job) => {
+              await createProject(name, job.config);
+              setForm(fromConfig(job.config, name));
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
             onReuse={(job) => {
               setProjectId(job.projectId ?? null);
               setForm(fromConfig(job.config, job.name));

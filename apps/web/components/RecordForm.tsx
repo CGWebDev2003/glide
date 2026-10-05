@@ -1,9 +1,10 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { EASING_NAMES, PRESETS } from '@glide/core/options';
 import { DEFAULT_FORM, estimateDuration, fromConfig, toConfig, type FormAction, type FormState, type ViewportMode } from '@/lib/form';
 import type { Project } from '@/lib/types';
 import { Picker } from './Picker';
+import { hostOf } from './format';
 
 const COMMON_HIDE = [
   { label: 'Cookiebot', sel: '#CybotCookiebotDialog' },
@@ -34,8 +35,14 @@ interface Props {
   projects: Project[];
   projectId: string | null;
   setProjectId: (id: string | null) => void;
-  onSaveProject: (name: string) => Promise<void>;
+  /** creates a project from the current settings and makes it the active one */
+  onCreateProject: (name: string) => Promise<void>;
+  /** stores the current settings in the active project */
+  onSaveProject: () => Promise<void>;
+  onRenameProject: (id: string, name: string) => Promise<void>;
   onDeleteProject: (id: string) => Promise<void>;
+  /** the current settings differ from the active project */
+  projectDirty: boolean;
   onSubmit: () => void;
   submitting: boolean;
   error: string | null;
@@ -74,10 +81,8 @@ export function RecordForm(p: Props) {
         p.onSubmit();
       }}
     >
-      <div className="form-head">
-        <h2>Neue Aufnahme</h2>
-        <ProjectPicker {...p} />
-      </div>
+      <h2>Neue Aufnahme</h2>
+      <ProjectBar {...p} />
 
       <label className="field url-field">
         <span>Website</span>
@@ -323,46 +328,119 @@ export function RecordForm(p: Props) {
   );
 }
 
-function ProjectPicker(p: Props) {
+const NEW = '__new__';
+
+function ProjectBar(p: Props) {
   const current = p.projects.find((x) => x.id === p.projectId);
+  // naming a new project or renaming the active one
+  const [editing, setEditing] = useState<{ kind: 'new' | 'rename'; name: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (editing) input.current?.select();
+  }, [editing?.kind]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const run = async (fn: () => Promise<void>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await fn();
+      setEditing(null);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirm = () => {
+    const name = editing?.name.trim();
+    if (!editing || !name) return;
+    if (editing.kind === 'new') void run(() => p.onCreateProject(name));
+    else if (current) void run(() => p.onRenameProject(current.id, name));
+  };
+
+  if (editing) {
+    return (
+      <div className="project-bar">
+        <div className="project-edit">
+          <input
+            ref={input}
+            aria-label="Projektname"
+            placeholder="Projektname, z. B. Kunde GmbH"
+            value={editing.name}
+            disabled={busy}
+            onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+            onKeyDown={(e) => {
+              // Enter must not submit the recording form
+              if (e.key === 'Enter') { e.preventDefault(); confirm(); }
+              if (e.key === 'Escape') { e.preventDefault(); setEditing(null); }
+            }}
+          />
+          <button type="button" className="btn primary small" disabled={busy || !editing.name.trim()} onClick={confirm}>
+            {editing.kind === 'new' ? 'Anlegen' : 'Umbenennen'}
+          </button>
+          <button type="button" className="btn ghost small" disabled={busy} onClick={() => setEditing(null)}>Abbrechen</button>
+        </div>
+        {editing.kind === 'new' && <p className="hint">Übernimmt die aktuellen Einstellungen. Neue Aufnahmen landen dann in diesem Projekt.</p>}
+        {error && <p className="error small" role="alert">{error}</p>}
+      </div>
+    );
+  }
+
   return (
-    <div className="project-picker">
-      <select
-        aria-label="Projekt"
-        value={p.projectId ?? ''}
-        onChange={(e) => {
-          const pr = p.projects.find((x) => x.id === e.target.value);
-          p.setProjectId(pr?.id ?? null);
-          if (pr) p.setForm(fromConfig(pr.config, pr.name));
-        }}
-      >
-        <option value="">{p.projects.length ? 'Projekt laden…' : 'Keine Projekte'}</option>
-        {p.projects.map((pr) => (
-          <option key={pr.id} value={pr.id}>{pr.name}</option>
-        ))}
-      </select>
-      <button
-        type="button"
-        className="btn ghost small"
-        disabled={!p.form.url.trim()}
-        onClick={async () => {
-          const name = window.prompt('Projektname', current?.name ?? p.form.name ?? '');
-          if (name?.trim()) await p.onSaveProject(name.trim());
-        }}
-      >
-        {current ? 'Speichern' : 'Als Projekt speichern'}
-      </button>
-      {current && (
-        <button
-          type="button"
-          className="btn ghost small danger"
-          onClick={async () => {
-            if (window.confirm(`Projekt „${current.name}“ löschen?`)) await p.onDeleteProject(current.id);
+    <div className="project-bar">
+      <div className="project-row">
+        <select
+          aria-label="Projekt"
+          value={current?.id ?? ''}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (v === NEW) {
+              setEditing({ kind: 'new', name: hostOf(p.form.url) });
+              return;
+            }
+            const pr = p.projects.find((x) => x.id === v);
+            p.setProjectId(pr?.id ?? null);
+            if (pr) p.setForm(fromConfig(pr.config, pr.name));
           }}
         >
-          Löschen
-        </button>
-      )}
+          <option value="">Ohne Projekt</option>
+          {p.projects.length > 0 && (
+            <optgroup label="Projekte">
+              {p.projects.map((pr) => (
+                <option key={pr.id} value={pr.id}>{pr.name}</option>
+              ))}
+            </optgroup>
+          )}
+          <option value={NEW}>＋ Neues Projekt…</option>
+        </select>
+        {!current && (
+          <button type="button" className="btn ghost small" onClick={() => setEditing({ kind: 'new', name: hostOf(p.form.url) })}>
+            ＋ Neues Projekt
+          </button>
+        )}
+        {current && (
+          <>
+            {p.projectDirty ? (
+              <button type="button" className="btn ghost small" disabled={busy} onClick={() => void run(p.onSaveProject)}
+                title="Es gibt ungespeicherte Änderungen – im Projekt speichern">
+                <span className="dirty-dot" aria-hidden="true" />Speichern
+              </button>
+            ) : (
+              <span className="project-state small muted">✓ gespeichert</span>
+            )}
+            <button type="button" className="btn ghost small icon" aria-label="Projekt umbenennen" title="Umbenennen"
+              onClick={() => setEditing({ kind: 'rename', name: current.name })}>✎</button>
+            <button type="button" className="btn ghost small icon danger" aria-label="Projekt löschen" title="Löschen"
+              onClick={() => {
+                if (window.confirm(`Projekt „${current.name}“ löschen? Die Videos bleiben erhalten.`)) void run(() => p.onDeleteProject(current.id));
+              }}>✕</button>
+          </>
+        )}
+      </div>
+      {error && <p className="error small" role="alert">{error}</p>}
     </div>
   );
 }

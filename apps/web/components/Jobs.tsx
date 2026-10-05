@@ -65,17 +65,22 @@ function ActiveJob({ job }: { job: Job }) {
   );
 }
 
-type Group = { key: string; title: string; sub?: string; jobs: Job[] };
+type Group = { key: string; title: string; sub?: string; project?: Project; jobs: Job[] };
 
-/** videos of a saved project belong to it, all others to their domain (jobs come newest first) */
+/**
+ * Videos of a saved project belong to it; videos without one (or of a deleted
+ * project) to the project for their domain, else to the domain itself.
+ * Jobs come newest first, so groups are ordered by their newest video.
+ */
 function groupJobs(jobs: Job[], projects: Project[]): Group[] {
   const groups = new Map<string, Group>();
   for (const j of jobs) {
     const host = hostOf(j.config.url);
-    const project = j.projectId ? projects.find((p) => p.id === j.projectId) : undefined;
+    const project = (j.projectId ? projects.find((p) => p.id === j.projectId) : undefined)
+      ?? projects.find((p) => hostOf(p.config.url) === host);
     const key = project ? `p:${project.id}` : `d:${host}`;
     let g = groups.get(key);
-    if (!g) groups.set(key, (g = project ? { key, title: project.name, sub: host, jobs: [] } : { key, title: host, jobs: [] }));
+    if (!g) groups.set(key, (g = project ? { key, title: project.name, sub: host, project, jobs: [] } : { key, title: host, jobs: [] }));
     g.jobs.push(j);
   }
   return [...groups.values()];
@@ -83,7 +88,13 @@ function groupJobs(jobs: Job[], projects: Project[]): Group[] {
 
 const FILTER_KEY = 'glide.gallery.filter';
 
-export function Gallery({ jobs, projects, onReuse }: { jobs: Job[]; projects: Project[]; onReuse: (job: Job) => void }) {
+export function Gallery({ jobs, projects, onReuse, onCreateProject }: {
+  jobs: Job[];
+  projects: Project[];
+  onReuse: (job: Job) => void;
+  /** creates a project from a domain's newest video */
+  onCreateProject: (name: string, job: Job) => Promise<void>;
+}) {
   const [open, setOpen] = useState<Job | null>(null);
   const [filter, setFilterState] = useState<string | null>(null);
   useEffect(() => {
@@ -142,12 +153,18 @@ export function Gallery({ jobs, projects, onReuse }: { jobs: Job[]; projects: Pr
           <div className="gallery-groups">
             {shown.map((g) => (
               <section key={g.key} className="gallery-group" aria-label={g.title}>
-                {groups.length > 1 && (
-                  <h3 className="gallery-group-head">
-                    <span>{g.title}</span>
+                {(groups.length > 1 || !g.project) && (
+                  <div className="gallery-group-head">
+                    <h3>{g.title}</h3>
                     {g.sub && g.sub !== g.title && <span className="muted small">{g.sub}</span>}
                     <span className="muted small">{g.jobs.length} {g.jobs.length === 1 ? 'Video' : 'Videos'}</span>
-                  </h3>
+                    {!g.project && (
+                      <button type="button" className="btn ghost small" title="Projekt mit den Einstellungen des neuesten Videos anlegen"
+                        onClick={() => void onCreateProject(g.title, g.jobs[0]).catch((e) => window.alert((e as Error).message))}>
+                        ＋ Als Projekt anlegen
+                      </button>
+                    )}
+                  </div>
                 )}
                 <div className="gallery">
                   {g.jobs.map((j) => (
