@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import type { Job } from '@/lib/types';
+import type { Job, Project } from '@/lib/types';
 import { fmtBytes, fmtDate, fmtDuration, hostOf } from './format';
 
 const cancelOrDelete = (id: string) => fetch(`/api/jobs/${id}`, { method: 'DELETE' });
@@ -65,10 +65,51 @@ function ActiveJob({ job }: { job: Job }) {
   );
 }
 
-export function Gallery({ jobs, onReuse }: { jobs: Job[]; onReuse: (job: Job) => void }) {
+type Group = { key: string; title: string; sub?: string; project?: Project; jobs: Job[] };
+
+/**
+ * Videos of a saved project belong to it; videos without one (or of a deleted
+ * project) to the project for their domain, else to the domain itself.
+ * Jobs come newest first, so groups are ordered by their newest video.
+ */
+function groupJobs(jobs: Job[], projects: Project[]): Group[] {
+  const groups = new Map<string, Group>();
+  for (const j of jobs) {
+    const host = hostOf(j.config.url);
+    const project = (j.projectId ? projects.find((p) => p.id === j.projectId) : undefined)
+      ?? projects.find((p) => hostOf(p.config.url) === host);
+    const key = project ? `p:${project.id}` : `d:${host}`;
+    let g = groups.get(key);
+    if (!g) groups.set(key, (g = project ? { key, title: project.name, sub: host, project, jobs: [] } : { key, title: host, jobs: [] }));
+    g.jobs.push(j);
+  }
+  return [...groups.values()];
+}
+
+const FILTER_KEY = 'glide.gallery.filter';
+
+export function Gallery({ jobs, projects, onReuse, onCreateProject }: {
+  jobs: Job[];
+  projects: Project[];
+  onReuse: (job: Job) => void;
+  /** creates a project from a domain's newest video */
+  onCreateProject: (name: string, job: Job) => Promise<void>;
+}) {
   const [open, setOpen] = useState<Job | null>(null);
+  const [filter, setFilterState] = useState<string | null>(null);
+  useEffect(() => {
+    try { setFilterState(localStorage.getItem(FILTER_KEY)); } catch { /* no storage */ }
+  }, []);
+  const setFilter = (key: string | null) => {
+    setFilterState(key);
+    try { if (key) localStorage.setItem(FILTER_KEY, key); else localStorage.removeItem(FILTER_KEY); } catch { /* no storage */ }
+  };
   const done = jobs.filter((j) => j.status === 'done');
   const failed = jobs.filter((j) => j.status === 'error' || j.status === 'cancelled').slice(0, 5);
+  const groups = groupJobs(done, projects);
+  // a remembered filter whose group no longer exists shows everything
+  const active = groups.find((g) => g.key === filter) ?? null;
+  const shown = active ? [active] : groups;
   return (
     <section className="card">
       <div className="gallery-head">
@@ -95,11 +136,45 @@ export function Gallery({ jobs, onReuse }: { jobs: Job[]; onReuse: (job: Job) =>
       {done.length === 0 ? (
         <p className="empty">Noch keine Videos. Starte oben deine erste Aufnahme.</p>
       ) : (
-        <div className="gallery">
-          {done.map((j) => (
-            <VideoCard key={j.id} job={j} onOpen={() => setOpen(j)} onReuse={() => onReuse(j)} />
-          ))}
-        </div>
+        <>
+          {groups.length > 1 && (
+            <div className="chips gallery-filter" role="group" aria-label="Nach Projekt oder Domain filtern">
+              <button type="button" className={`chip ${active ? '' : 'on'}`} aria-pressed={!active} onClick={() => setFilter(null)}>
+                Alle <span className="chip-count">{done.length}</span>
+              </button>
+              {groups.map((g) => (
+                <button type="button" key={g.key} className={`chip ${active?.key === g.key ? 'on' : ''}`} aria-pressed={active?.key === g.key}
+                  onClick={() => setFilter(g.key)}>
+                  {g.title} <span className="chip-count">{g.jobs.length}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="gallery-groups">
+            {shown.map((g) => (
+              <section key={g.key} className="gallery-group" aria-label={g.title}>
+                {(groups.length > 1 || !g.project) && (
+                  <div className="gallery-group-head">
+                    <h3>{g.title}</h3>
+                    {g.sub && g.sub !== g.title && <span className="muted small">{g.sub}</span>}
+                    <span className="muted small">{g.jobs.length} {g.jobs.length === 1 ? 'Video' : 'Videos'}</span>
+                    {!g.project && (
+                      <button type="button" className="btn ghost small" title="Projekt mit den Einstellungen des neuesten Videos anlegen"
+                        onClick={() => void onCreateProject(g.title, g.jobs[0]).catch((e) => window.alert((e as Error).message))}>
+                        ＋ Als Projekt anlegen
+                      </button>
+                    )}
+                  </div>
+                )}
+                <div className="gallery">
+                  {g.jobs.map((j) => (
+                    <VideoCard key={j.id} job={j} onOpen={() => setOpen(j)} onReuse={() => onReuse(j)} />
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+        </>
       )}
       {open && <VideoModal job={open} onClose={() => setOpen(null)} />}
     </section>
