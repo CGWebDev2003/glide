@@ -1,6 +1,6 @@
 {
   "name": "glide",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Glide CLI: record websites as perfectly smooth scroll videos.",
   "type": "module",
