@@ -52,3 +52,32 @@ for (const name of ['playwright', 'playwright-core', 'zod']) {
 }
 
 console.log(`\nServer ready in ${path.relative(rootDir, outDir)}`);
+
+// ffmpeg for this platform (from ffmpeg-static), so recipients need no install.
+// The license and build info ship alongside, as the GPL build requires.
+const ffmpegDir = path.join(desktopDir, 'bundle/ffmpeg');
+const requireFromDesktop = createRequire(path.join(desktopDir, 'package.json'));
+const ffmpegBin = requireFromDesktop('ffmpeg-static');
+if (!ffmpegBin || !existsSync(ffmpegBin)) {
+  console.error('ffmpeg-static binary missing. Run "npm install" again (it downloads on install).');
+  process.exit(1);
+}
+rmSync(ffmpegDir, { recursive: true, force: true });
+copy(ffmpegBin, path.join(ffmpegDir, path.basename(ffmpegBin)));
+for (const file of ['ffmpeg.LICENSE', 'ffmpeg.README']) {
+  const src = path.join(path.dirname(ffmpegBin), file);
+  if (existsSync(src)) copy(src, path.join(ffmpegDir, file));
+}
+console.log(`ffmpeg ready in ${path.relative(rootDir, ffmpegDir)}`);
+
+// Chromium for the bundled Playwright version. The app only records headless,
+// so the headless shell is enough. Kept between builds; Playwright skips the
+// download when it is already there and removes outdated revisions.
+const browsersDir = path.join(desktopDir, 'bundle/browsers');
+const install = spawnSync(
+  process.execPath,
+  [path.join(modules, 'playwright-core/cli.js'), 'install', '--only-shell', 'chromium'],
+  { stdio: 'inherit', env: { ...process.env, PLAYWRIGHT_BROWSERS_PATH: browsersDir } },
+);
+if (install.status !== 0) process.exit(install.status ?? 1);
+console.log(`Chromium ready in ${path.relative(rootDir, browsersDir)}`);

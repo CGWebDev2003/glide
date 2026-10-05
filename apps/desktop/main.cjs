@@ -24,8 +24,22 @@ let quitting = false;
 let confirmed = false;
 let confirming = false;
 
+function bundleDir() {
+  return app.isPackaged ? process.resourcesPath : path.join(__dirname, 'bundle');
+}
+
 function serverDir() {
-  return app.isPackaged ? path.join(process.resourcesPath, 'server') : path.join(__dirname, 'bundle/server');
+  return path.join(bundleDir(), 'server');
+}
+
+/** Points the server to the bundled ffmpeg and Chromium, unless set explicitly. */
+function bundledToolsEnv() {
+  const env = {};
+  const ffmpeg = path.join(bundleDir(), 'ffmpeg', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
+  if (!process.env.GLIDE_FFMPEG && fs.existsSync(ffmpeg)) env.GLIDE_FFMPEG = ffmpeg;
+  const browsers = path.join(bundleDir(), 'browsers');
+  if (!process.env.PLAYWRIGHT_BROWSERS_PATH && fs.existsSync(browsers)) env.PLAYWRIGHT_BROWSERS_PATH = browsers;
+  return env;
 }
 
 function isPortFree(port) {
@@ -86,7 +100,7 @@ async function startServer() {
   // Run the server with Electron's built-in Node.js, no separate install needed.
   server = spawn(process.execPath, [script], {
     cwd: path.dirname(script),
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', NODE_ENV: 'production', PORT: String(port), HOSTNAME: HOST },
+    env: { ...process.env, ...bundledToolsEnv(), ELECTRON_RUN_AS_NODE: '1', NODE_ENV: 'production', PORT: String(port), HOSTNAME: HOST },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   });
