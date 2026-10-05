@@ -229,10 +229,44 @@ async function runPicker(url: string) {
     await s.setHidden(['div.consent-wrap']);
     const [gone] = await s.rects([{ selector: '.consent button' }]);
     check('hidden elements disappear from the preview', gone === null);
-    check('preview screenshot', (await s.screenshot()).length > 1000);
+    check('preview frame', ((await s.nextFrame(0))?.image.length ?? 0) > 1000);
   } finally {
     await s.close();
   }
+}
+
+/** Page whose <body> scrolls instead of the document (html, body { height: 100%; overflow-x: hidden }). */
+async function runContainer(url: string) {
+  const fps = 30;
+  const base = {
+    url,
+    viewport: { width: 1280, height: 720 },
+    deviceScaleFactor: 1,
+    fps,
+    introDuration: 0.2,
+    outroDuration: 0.2,
+    scroll: { speed: 2400 },
+    encoderPreset: 'veryfast' as const,
+    prepass: false,
+  };
+  const expected = 4 * 900 - 720;
+  const r = await record(parseConfig(base), { output: path.join(outDir, 'e2e-container.mp4') });
+  console.log(`\n── container: ${r.frames} frames, driver=${r.driver}, maxScroll=${r.maxScroll}`);
+  check('scroll container detected (body)', r.driver === 'native (container: body)', r.driver);
+  check('container scroll length measured', Math.abs(r.maxScroll - expected) <= 1, `${r.maxScroll}`);
+  const ys = r.scrollPositions;
+  const mono = ys.every((y, i) => i === 0 || y >= ys[i - 1] - 0.5);
+  check('container scrolls top to bottom', ys[0] === 0 && Math.abs(ys[ys.length - 1] - expected) <= 1 && mono);
+
+  const hooked = await record(parseConfig({
+    ...base,
+    scrollDriver: 'custom',
+    scrollHook: '(y) => { document.body.scrollTop = y }',
+  }), { output: path.join(outDir, 'e2e-container-hook.mp4') });
+  check('custom hook measures the container', Math.abs(hooked.maxScroll - expected) <= 1, `${hooked.maxScroll}`);
+
+  const off = await record(parseConfig({ ...base, scrollContainer: 'none' }), { output: path.join(outDir, 'e2e-container-off.mp4') });
+  check('scrollContainer "none" keeps the document', off.maxScroll === 0 && off.driver === 'native');
 }
 
 const { server, url } = await startServer();
@@ -258,6 +292,7 @@ try {
 
   await runPicker(`${url}actions.html`);
   await runActions(`${url}actions.html`);
+  await runContainer(`${url}container.html`);
   contactSheet(path.join(outDir, 'e2e-actions.mp4'), path.join(outDir, 'sheet-actions.png'), 0, 400, 12);
 
   contactSheet(path.join(outDir, 'e2e-native.mp4'), path.join(outDir, 'sheet-intro.png'), 0, 44, 4);

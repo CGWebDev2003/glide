@@ -266,7 +266,7 @@ export function installGlideRuntime(opts: { seed: number | null }): void {
   const nativeFrame = () => new Promise<void>((r) => nativeRAF(() => r()));
 
   // ---- scroll drivers ----------------------------------------------------------
-  type Driver = { kind: 'native' | 'lenis' | 'custom'; lenisPath?: string; hook?: string };
+  type Driver = { kind: 'native' | 'lenis' | 'custom'; lenisPath?: string; hook?: string; container?: string | null };
   let driver: Driver = { kind: 'native' };
   let customHook: ((y: number) => unknown) | null = null;
 
@@ -274,6 +274,60 @@ export function installGlideRuntime(opts: { seed: number | null }): void {
     path.split('.').reduce<any>((o, k) => (o == null ? undefined : o[k]), window);
 
   const scrollEl = () => document.scrollingElement || document.documentElement;
+  const docMaxScroll = () => Math.max(0, scrollEl().scrollHeight - window.innerHeight);
+
+  // Pages that scroll inside an element instead of the document, e.g.
+  // `html, body { height: 100%; overflow-x: hidden }` (overflow-y then computes
+  // to auto and <body> becomes the scroller), or app shells with a wrapper div.
+  // `null` = the document scrolls.
+  let containerSelector: string | null = null;
+  let container: HTMLElement | null = null;
+
+  const isScrollable = (el: Element) => {
+    const oy = getComputedStyle(el).overflowY;
+    return (oy === 'auto' || oy === 'scroll' || oy === 'overlay') && el.scrollHeight - el.clientHeight > 1;
+  };
+
+  /** The element covering most of the viewport that scrolls further than the document. */
+  const detectContainer = (): HTMLElement | null => {
+    const docMax = docMaxScroll();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    let best: HTMLElement | null = null;
+    let bestArea = 0;
+    for (const el of Array.from(document.querySelectorAll('body, body *')) as HTMLElement[]) {
+      if (el.id === CURSOR_ID || !isScrollable(el)) continue;
+      if (el.scrollHeight - el.clientHeight <= docMax + 1) continue;
+      const r = el.getBoundingClientRect();
+      const w = Math.max(0, Math.min(r.right, vw) - Math.max(r.left, 0));
+      const h = Math.max(0, Math.min(r.bottom, vh) - Math.max(r.top, 0));
+      const area = w * h;
+      // main scroller: at least half the viewport (skips menus, modals, carousels)
+      if (area >= vw * vh * 0.5 && area > bestArea) { best = el; bestArea = area; }
+    }
+    return best;
+  };
+
+  const resolveContainer = (): HTMLElement | null => {
+    if (container && container.isConnected) return container;
+    container = null;
+    if (containerSelector === null) return null;
+    if (containerSelector === 'auto') {
+      // only when the document itself can't scroll (cheap check first)
+      if (docMaxScroll() > 1) return null;
+      container = detectContainer();
+    } else {
+      try { container = document.querySelector(containerSelector) as HTMLElement | null; } catch { container = null; }
+    }
+    return container;
+  };
+
+  const describeContainer = (el: HTMLElement) => {
+    if (el === document.body) return 'body';
+    if (el.id) return `#${el.id}`;
+    const cls = Array.from(el.classList).slice(0, 2).map((c) => `.${c}`).join('');
+    return el.tagName.toLowerCase() + cls;
+  };
 
   const setScroll = async (y: number) => {
     if (driver.kind === 'lenis') {
@@ -286,7 +340,9 @@ export function installGlideRuntime(opts: { seed: number | null }): void {
       await customHook(y);
       return;
     }
-    window.scrollTo({ top: y, left: 0, behavior: 'instant' as ScrollBehavior });
+    const c = resolveContainer();
+    if (c) c.scrollTo({ top: y, left: 0, behavior: 'instant' as ScrollBehavior });
+    else window.scrollTo({ top: y, left: 0, behavior: 'instant' as ScrollBehavior });
   };
 
   const getMaxScroll = () => {
@@ -294,8 +350,18 @@ export function installGlideRuntime(opts: { seed: number | null }): void {
       const lenis = resolvePath(driver.lenisPath || 'lenis');
       if (lenis && typeof lenis.limit === 'number') return lenis.limit;
     }
-    const el = scrollEl();
-    return Math.max(0, el.scrollHeight - window.innerHeight);
+    const c = resolveContainer();
+    if (c) return Math.max(0, c.scrollHeight - c.clientHeight);
+    return docMaxScroll();
+  };
+
+  const getScrollY = (): number => {
+    if (driver.kind === 'lenis') {
+      const lenis = resolvePath(driver.lenisPath || 'lenis');
+      if (lenis && typeof lenis.scroll === 'number') return lenis.scroll;
+    }
+    const c = resolveContainer();
+    return c ? c.scrollTop : window.scrollY;
   };
 
   // ---- actions: element lookup, cursor overlay, navigation guard --------------
@@ -371,6 +437,8 @@ export function installGlideRuntime(opts: { seed: number | null }): void {
     setDriver(d: Driver) {
       driver = d;
       customHook = null;
+      containerSelector = d.container ?? null;
+      container = null;
       if (d.kind === 'custom' && d.hook) {
         // eslint-disable-next-line no-new-func
         customHook = (0, eval)(`(${d.hook})`);
@@ -383,12 +451,12 @@ export function installGlideRuntime(opts: { seed: number | null }): void {
       }
     },
     getMaxScroll,
-    getScrollY() {
-      if (driver.kind === 'lenis') {
-        const lenis = resolvePath(driver.lenisPath || 'lenis');
-        if (lenis && typeof lenis.scroll === 'number') return lenis.scroll;
-      }
-      return window.scrollY;
+    getScrollY,
+    /** Scroll container in use (short selector), or null when the document scrolls. */
+    getContainer() {
+      if (driver.kind === 'lenis') return null;
+      const c = resolveContainer();
+      return c ? describeContainer(c) : null;
     },
     getViewportHeight() { return window.innerHeight; },
 
@@ -418,7 +486,7 @@ export function installGlideRuntime(opts: { seed: number | null }): void {
 
     /** Absolute top positions (document coordinates) of elements matching `selector`. */
     sectionTops(selector: string, minHeight: number) {
-      const sy = window.scrollY;
+      const sy = getScrollY();
       const els = Array.from(document.querySelectorAll(selector)) as HTMLElement[];
       // keep only outermost matches (no nested sections)
       const outer = els.filter((el) => !els.some((o) => o !== el && o.contains(el)));

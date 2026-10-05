@@ -373,8 +373,14 @@ async function selectDriver(page: Page, c: Config, warn: (m: string) => void): P
     kind,
     lenisPath: c.lenisPath,
     hook: c.scrollHook,
+    container: c.scrollContainer === 'none' ? null : c.scrollContainer,
   });
-  return kind;
+  if (kind === 'lenis') return kind;
+  const container = await page.evaluate(() => window.__glide.getContainer() as string | null);
+  if (!container && c.scrollContainer !== 'auto' && c.scrollContainer !== 'none') {
+    warn(`scrollContainer "${c.scrollContainer}" not found - scrolling the document instead`);
+  }
+  return container ? `${kind} (container: ${container})` : kind;
 }
 
 async function planTimeline(page: Page, c: Config, introDuration: number, actions: ResolvedAction[]): Promise<Timeline> {
