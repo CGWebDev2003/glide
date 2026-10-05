@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { normalizeUrl, toConfig, type FormAction, type FormState } from '@/lib/form';
 
 type Mode = 'hover' | 'click' | 'hide';
@@ -291,7 +292,9 @@ export function Picker({ form, setForm, onClose }: { form: FormState; setForm: (
   const hoverCandidate = hover ? hover.chain[hover.start] : null;
   const hidden = lines(form.hideSelectors);
 
-  return (
+  // portal: the form column is sticky (own stacking context), so inside it the
+  // gallery thumbnails would be painted on top of the fullscreen preview
+  return createPortal(
     <div className="modal picker" role="dialog" aria-modal="true" aria-label="Elemente auswählen">
       <div className="picker-body">
         <div className="picker-bar">
@@ -384,6 +387,7 @@ export function Picker({ form, setForm, onClose }: { form: FormState; setForm: (
           </aside>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
