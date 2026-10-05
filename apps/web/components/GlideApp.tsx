@@ -130,6 +130,7 @@ export function GlideApp({ sharedUrl }: { sharedUrl?: string }) {
           <ActiveJobs jobs={active} />
           <Gallery
             jobs={jobs}
+            projects={projects}
             onReuse={(job) => {
               setProjectId(job.projectId ?? null);
               setForm(fromConfig(job.config, job.name));
