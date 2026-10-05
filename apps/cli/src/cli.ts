@@ -19,7 +19,7 @@ const program = new Command();
 program
   .name('glide')
   .description('Record websites as perfectly smooth scroll videos (deterministic, frame by frame).')
-  .version('0.2.0');
+  .version('0.3.0');
 
 const num = (v: string) => {
   const n = Number(v);
