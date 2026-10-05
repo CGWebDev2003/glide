@@ -82,7 +82,10 @@ Zum Ausprobieren ohne Installer: `npm run desktop`.
 
 Hinweise:
 
-- **ffmpeg** und **Chromium** (`npx playwright install chromium`) müssen wie bisher installiert sein. Die App findet ffmpeg aus Homebrew auch ohne Terminal-PATH. `GLIDE_FFMPEG` und `GLIDE_DATA_DIR` gelten nur, wenn sie systemweit gesetzt sind.
+- **ffmpeg** und **Chromium** sind in der App enthalten. Die fertige App läuft also auch auf Rechnern ohne Node.js, ffmpeg oder Playwright und lässt sich einfach weitergeben. Beim Bauen lädt `npm install` ffmpeg (über `ffmpeg-static`) und `npm run desktop` Chromium für das eigene System herunter. Der Installer wird dadurch deutlich größer.
+- Sind `GLIDE_FFMPEG` oder `PLAYWRIGHT_BROWSERS_PATH` systemweit gesetzt, nutzt die App diese statt der mitgelieferten Versionen. Dasselbe gilt für `GLIDE_DATA_DIR`.
+- Das mitgelieferte ffmpeg steht unter der GPL. Lizenz und Build-Infos liegen in der App unter `resources/ffmpeg/`.
+- Unter Windows ist die App nicht signiert. Beim ersten Start warnt SmartScreen: „Weitere Informationen“ → „Trotzdem ausführen“.
 - Videos, Projekte und Verlauf liegen weiterhin in **`~/Glide`**, Web-App und Desktop-App teilen sie sich.
 - Läuft bereits `npm run app` auf Port 4321, öffnet die Desktop-App einfach diese Instanz. Ist der Port anderweitig belegt, nimmt sie einen freien.
 - Laufen beim Beenden noch Aufnahmen, fragt Glide vorher nach.
