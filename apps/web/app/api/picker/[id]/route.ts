@@ -9,7 +9,7 @@ type Op =
   | { op: 'inspect'; x: number; y: number; mode: PickMode }
   | { op: 'scroll'; dy: number; x?: number; y?: number }
   | { op: 'hide'; selectors: string[] }
-  | { op: 'rects'; targets: { selector: string; text?: string }[] };
+  | { op: 'targets'; targets: { selector: string; text?: string }[] };
 
 const finite = (...n: unknown[]) => n.every((v) => typeof v === 'number' && Number.isFinite(v));
 
@@ -29,8 +29,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         case 'hide':
           await s.setHidden((o.selectors ?? []).filter((x) => typeof x === 'string'));
           return { ok: true };
-        case 'rects':
-          return { rects: await s.rects((o.targets ?? []).filter((t) => t && typeof t.selector === 'string')) };
+        case 'targets':
+          await s.setTargets((o.targets ?? []).filter((t) => t && typeof t.selector === 'string'));
+          return { ok: true };
         default:
           throw new Error('unbekannte Aktion');
       }

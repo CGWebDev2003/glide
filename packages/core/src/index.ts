@@ -30,4 +30,6 @@ export {
   type PickRect,
   type PickCandidate,
   type PickResult,
+  type PickTarget,
+  type PickFrame,
 } from './picker.js';
