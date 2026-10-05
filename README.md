@@ -184,6 +184,7 @@ In der Web-App lassen sich dieselben Dateien unter „Config als JSON → Datei 
 | `scrollDriver` | `"auto"` | `auto`: Lenis, wenn gefunden, sonst nativ; `native`, `lenis`, `custom` |
 | `lenisPath` | `"lenis"` | Pfad auf `window` zur Lenis-Instanz, z. B. `"app.lenis"` |
 | `scrollHook` | – | für `custom`: JS-Funktion als String, `"(y) => { … }"`, darf async sein |
+| `scrollContainer` | `"auto"` | Element, das statt des Dokuments scrollt. `auto`: wird erkannt, wenn das Dokument selbst nicht scrollen kann (z. B. `html, body { height: 100%; overflow-x: hidden }`); `none`: immer das Dokument; sonst ein CSS-Selektor |
 | `actions` | `[]` | Hover & Klicks, siehe unten |
 | `cursor.style` / `cursor.size` | `"auto"` / `28` | sichtbarer Cursor bei Aktionen: `auto` (Pfeil, auf Mobil-Viewports ein Touch-Punkt), `arrow`, `touch`, `none`; Größe in CSS-px |
 | `hideSelectors` | `[]` | werden per injiziertem CSS mit `display:none !important` ausgeblendet, auch wenn sie später erscheinen |
@@ -350,7 +351,7 @@ Zusätzlich schreibt der Test Kontaktbögen (`packages/core/test/out/sheet-*.png
 - `event.timeStamp` und `document.timeline.currentTime` liefern die echte bzw. eingefrorene Zeit.
 - Bibliotheken, die Geschwindigkeit aus echten Scroll-Event-Zeitstempeln berechnen (Velocity-Skew-Effekte), können anders aussehen als im echten Browser.
 - CSS `animation-play-state`, das sich *nach* dem Start einer Animation per Klasse ändert, wird nicht respektiert (die Animation wird per API gesteuert). JS-seitiges `animation.pause()/play()` wird dagegen respektiert.
-- Seiten, die in einem eigenen Container statt im Dokument scrollen: `scrollDriver: "custom"` mit Hook verwenden, z. B. `"(y) => { document.querySelector('.scroller').scrollTop = y }"`.
+- Seiten, die in einem eigenen Container statt im Dokument scrollen (häufig `<body>` durch `html, body { height: 100%; overflow-x: hidden }`), erkennt Glide automatisch; im Log steht dann `Scroll driver: native (container: body)`. Greift die Erkennung nicht, den Container per `scrollContainer: ".scroller"` angeben.
 - Lenis wird nur gefunden, wenn die Instanz auf `window` erreichbar ist (`window.lenis = lenis` oder `lenisPath`). Sonst warnt Glide und scrollt nativ, was mit Lenis meist trotzdem funktioniert.
 - Preloader, die auf Timer warten, laufen in virtueller Zeit, also sichtbar im Intro. Mit `warmup` überspringen.
 - Bot-Schutz (Cloudflare o. Ä.) kann Headless-Browser blockieren.

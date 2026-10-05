@@ -78,6 +78,12 @@ export const configSchema = z.object({
   lenisPath: z.string().default('lenis'),
   /** custom driver: JS function source `(y) => { ... }`, may be async. */
   scrollHook: z.string().optional(),
+  /**
+   * Element that scrolls instead of the document. `auto`: detected when the
+   * document itself can't scroll (e.g. `html, body { height: 100%; overflow-x: hidden }`);
+   * `none`: always the document; otherwise a CSS selector.
+   */
+  scrollContainer: z.string().min(1).default('auto'),
 
   /** Seconds to stay at the top before scrolling (hero animation). */
   introDuration: z.number().min(0).default(2),

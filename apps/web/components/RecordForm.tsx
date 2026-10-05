@@ -242,6 +242,10 @@ export function RecordForm(p: Props) {
             <span>Lenis-Pfad</span>
             <input value={f.lenisPath} onChange={(e) => set('lenisPath', e.target.value)} placeholder="lenis" />
           </label>
+          <label className="field">
+            <span>Scroll-Container <em>leer = automatisch, none = Dokument</em></span>
+            <input className="mono" value={f.scrollContainer} onChange={(e) => set('scrollContainer', e.target.value)} placeholder="auto" />
+          </label>
         </div>
         {f.scrollDriver === 'custom' && (
           <label className="field">

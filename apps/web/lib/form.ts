@@ -37,6 +37,8 @@ export interface FormState {
   scrollDriver: 'auto' | 'native' | 'lenis' | 'custom';
   lenisPath: string;
   scrollHook: string;
+  /** empty = auto */
+  scrollContainer: string;
   injectCss: string;
   warmup: number;
   prepass: boolean;
@@ -72,6 +74,7 @@ export const DEFAULT_FORM: FormState = {
   scrollDriver: 'auto',
   lenisPath: 'lenis',
   scrollHook: '',
+  scrollContainer: '',
   injectCss: '',
   warmup: 0,
   prepass: true,
@@ -121,6 +124,7 @@ export function toConfig(f: FormState): Record<string, unknown> {
   if (f.scrollDriver !== d.scrollDriver) c.scrollDriver = f.scrollDriver;
   if (f.lenisPath.trim() && f.lenisPath.trim() !== d.lenisPath) c.lenisPath = f.lenisPath.trim();
   if (f.scrollDriver === 'custom' && f.scrollHook.trim()) c.scrollHook = f.scrollHook.trim();
+  if (f.scrollContainer.trim() && f.scrollContainer.trim() !== 'auto') c.scrollContainer = f.scrollContainer.trim();
   if (f.injectCss.trim()) c.injectCss = f.injectCss;
   if (f.warmup) c.warmup = f.warmup;
   if (!f.prepass) c.prepass = false;
@@ -137,7 +141,7 @@ export function fromConfig(raw: Record<string, unknown>, name = ''): FormState {
   const d = DEFAULT_FORM;
   const {
     url, viewport, deviceScaleFactor, fps, format, outputSize, scroll, introDuration, outroDuration,
-    hideSelectors, actions, scrollDriver, lenisPath, scrollHook, injectCss, warmup, prepass, maxDuration, browser, output,
+    hideSelectors, actions, scrollDriver, lenisPath, scrollHook, scrollContainer, injectCss, warmup, prepass, maxDuration, browser, output,
     ...extra
   } = raw;
   void output; // the app names files itself
@@ -170,6 +174,7 @@ export function fromConfig(raw: Record<string, unknown>, name = ''): FormState {
     scrollDriver: (['auto', 'native', 'lenis', 'custom'].includes(scrollDriver as string) ? scrollDriver : 'auto') as FormState['scrollDriver'],
     lenisPath: str(lenisPath, d.lenisPath),
     scrollHook: str(scrollHook, ''),
+    scrollContainer: str(scrollContainer, 'auto') === 'auto' ? '' : str(scrollContainer, ''),
     injectCss: str(injectCss, ''),
     warmup: num(warmup, 0),
     prepass: prepass !== false,

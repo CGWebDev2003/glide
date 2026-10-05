@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Glide container scroll test</title>
+<style>
+  /* the document never scrolls: overflow-x: hidden turns overflow-y into auto,
+     so <body> (capped at 100%) becomes the scroll container */
+  html, body { height: 100%; overflow-x: hidden; margin: 0; }
+  body { font: 24px/1.4 sans-serif; scroll-behavior: smooth; }
+  section { height: 900px; display: grid; place-items: center; color: #fff; }
+  section:nth-child(odd) { background: #3a86ff; }
+  section:nth-child(even) { background: #ff006e; }
+  /* a small inner scroller that must not be picked */
+  .list { position: fixed; right: 10px; top: 10px; width: 160px; height: 120px; overflow-y: auto; background: #fff; color: #000; }
+  .list div { height: 2000px; }
+</style>
+</head>
+<body>
+  <section>1</section><section>2</section><section>3</section><section>4</section>
+  <div class="list"><div>inner</div></div>
+</body>
+</html>
