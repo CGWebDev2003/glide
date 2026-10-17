@@ -246,6 +246,7 @@ input[type='checkbox'] { width: 18px; height: 18px; accent-color: var(--accent);
 .picker-hl, .picker-mark { position: absolute; pointer-events: none; border-radius: 4px; }
 .picker-hl { --c: #3a86ff; outline: 2px solid var(--c); background: color-mix(in srgb, var(--c) 18%, transparent); }
 .mode-click .picker-hl { --c: var(--accent); }
+.mode-type .picker-hl { --c: #9b6dff; }
 .mode-hide .picker-hl { --c: var(--danger); background: repeating-linear-gradient(45deg, color-mix(in srgb, var(--c) 25%, transparent) 0 8px, transparent 8px 16px); }
 .picker-hl span { position: absolute; left: -2px; bottom: 100%; margin-bottom: 4px; max-width: 360px; padding: 2px 8px; border-radius: 6px; background: var(--c); color: #fff; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .picker-hl.below span { bottom: auto; top: 100%; margin: 4px 0 0; }
@@ -258,6 +259,8 @@ input[type='checkbox'] { width: 18px; height: 18px; accent-color: var(--accent);
 .picker-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
 .picker-list li { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; gap: 8px; align-items: center; font-size: 13px; }
 ul.picker-list li { grid-template-columns: minmax(0, 1fr) auto; }
+.picker-value { grid-column: 1 / -1; padding: 6px 10px; font-size: 13px; }
+.picker-value:placeholder-shown:not(:focus) { border-color: var(--warn); }
 .picker-num { min-width: 20px; height: 20px; border-radius: 10px; background: var(--ok); color: #000; font-weight: 700; font-size: 12px; text-align: center; line-height: 20px; }
 @media (max-width: 860px) {
   .picker-main { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }

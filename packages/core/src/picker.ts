@@ -3,12 +3,14 @@ import { resolveViewport, type Config } from './config.js';
 import { installPickerRuntime } from './page/picker-runtime.js';
 import { launchBrowser, newContext } from './recorder.js';
 
-export type PickMode = 'hover' | 'click' | 'hide';
+export type PickMode = 'hover' | 'click' | 'hide' | 'type';
 export interface PickRect { x: number; y: number; width: number; height: number }
 export interface PickCandidate { selector: string; label: string; rect: PickRect }
 /** Element under a point: `chain[0]` is the innermost hit, later entries its ancestors. */
 export interface PickResult { start: number; chain: PickCandidate[] }
 export interface PickTarget { selector: string; text?: string }
+/** The text of a type action, shown in its field. */
+export interface PickValue extends PickTarget { value: string }
 /** A preview frame plus the action target rects measured for it (`seq` grows with every frame). */
 export interface PickFrame { seq: number; image: Buffer; rects: (PickRect | null)[] }
 
@@ -126,6 +128,11 @@ export class PickerSession {
 
   async setHidden(selectors: string[]): Promise<void> {
     await this.page.evaluate((s) => window.__glidePick.setHidden(s), selectors);
+  }
+
+  /** Shows the texts of type actions in their fields (fields left out get their content back). */
+  async setValues(values: PickValue[]): Promise<void> {
+    await this.page.evaluate((v) => window.__glidePick.setValues(v), values);
   }
 
   /** Viewport rects of action targets (null = not found or not visible). */

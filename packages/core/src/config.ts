@@ -31,18 +31,24 @@ const scrollSchema = z
   })
   .prefault({});
 
-const actionSchema = z.object({
-  /** hover: move the mouse onto the element and stay; click: move there and click it. */
-  type: z.enum(['hover', 'click']),
-  /** CSS selector of the element. */
-  selector: z.string().min(1),
-  /** Only elements whose text contains this (case-insensitive) — picks one of several matches. */
-  text: z.string().optional(),
-  /** Seconds the cursor stays on the element after arriving (click: after the click). */
-  duration: z.number().min(0).default(1.5),
-  /** Seconds the cursor needs to travel to the element. */
-  moveDuration: z.number().min(0).default(0.7),
-});
+const actionSchema = z
+  .object({
+    /** hover: move the mouse onto the element and stay; click: move there and click it; type: click into the field and type `value`. */
+    type: z.enum(['hover', 'click', 'type']),
+    /** CSS selector of the element. */
+    selector: z.string().min(1),
+    /** Only elements whose text contains this (case-insensitive) — picks one of several matches. */
+    text: z.string().optional(),
+    /** type: the text that is typed into the field (replaces what is in it). */
+    value: z.string().optional(),
+    /** type: characters per second. */
+    typingSpeed: z.number().positive().default(12),
+    /** Seconds the cursor stays on the element after arriving (click: after the click; type: after typing). */
+    duration: z.number().min(0).default(1.5),
+    /** Seconds the cursor needs to travel to the element. */
+    moveDuration: z.number().min(0).default(0.7),
+  })
+  .refine((a) => a.type !== 'type' || !!a.value, { error: 'type actions need a "value" (the text to type)', path: ['value'] });
 
 const cursorSchema = z
   .object({

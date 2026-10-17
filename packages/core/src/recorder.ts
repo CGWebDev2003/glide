@@ -325,6 +325,11 @@ async function preparePage(page: Page, c: Config): Promise<void> {
       : '',
     // smooth scroll-behavior would turn every scrollTo into an animation
     'html, body { scroll-behavior: auto !important; }',
+    // the caret blinks in real time and would flicker at random; only the
+    // field being typed into shows it (runtime: caret()), with the page's
+    // own caret-color if it sets one on the field
+    ':not([data-glide-caret], [data-glide-caret] *) { caret-color: transparent !important; }',
+    ':where([data-glide-caret]) { caret-color: auto; }',
     c.injectCss ?? '',
   ].join('\n');
   await page.addStyleTag({ content: css });

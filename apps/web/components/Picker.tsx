@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { normalizeUrl, toConfig, type FormAction, type FormState } from '@/lib/form';
 
-type Mode = 'hover' | 'click' | 'hide';
+type Mode = 'hover' | 'click' | 'type' | 'hide';
 type Rect = { x: number; y: number; width: number; height: number };
 type Candidate = { selector: string; label: string; rect: Rect };
 type Inspect = { start: number; chain: Candidate[] };
@@ -16,15 +16,19 @@ type LastPick = { kind: 'action' | 'hide'; selector: string; chain: Candidate[];
 const MODES: { value: Mode; label: string; hint: string }[] = [
   { value: 'hover', label: 'Hover', hint: 'Maus drüber' },
   { value: 'click', label: 'Klick', hint: 'anklicken' },
+  { value: 'type', label: 'Text', hint: 'eintippen' },
   { value: 'hide', label: 'Ausblenden', hint: 'nicht im Video' },
 ];
+
+const ACTION_LABELS: Record<FormAction['type'], string> = { hover: 'Hover', click: 'Klick', type: 'Text' };
 
 const lines = (s: string) => s.split('\n').map((l) => l.trim()).filter(Boolean);
 
 /**
  * Live preview of the page (screenshots from a server-side browser with the
  * recording's viewport). Pointing at an element highlights it, clicking adds
- * it as hover/click action or to the hidden elements.
+ * it as hover/click/type action or to the hidden elements. Texts to type show
+ * up in their fields right away.
  */
 export function Picker({ form, setForm, onClose }: { form: FormState; setForm: (f: FormState) => void; onClose: () => void }) {
   const [session, setSession] = useState<Session | null>(null);
@@ -42,6 +46,8 @@ export function Picker({ form, setForm, onClose }: { form: FormState; setForm: (
   const inspecting = useRef(false);
   /** last mouse position over the preview (page pixels), inspected again after a scroll */
   const pointer = useRef<{ x: number; y: number } | null>(null);
+  /** a field just picked in the "Text" mode: its text input gets the focus */
+  const focusValue = useRef<number | null>(null);
 
   const call = useCallback(async (body: object) => {
     if (!session) return null;
@@ -127,6 +133,14 @@ export function Picker({ form, setForm, onClose }: { form: FormState; setForm: (
     if (!session) return;
     void call({ op: 'targets', targets: JSON.parse(targetsKey) }).catch(() => {});
   }, [session, call, targetsKey]);
+
+  // texts to type show up in their fields right away
+  const valuesKey = JSON.stringify(form.actions.filter((a) => a.type === 'type' && a.selector.trim() && a.value)
+    .map((a) => ({ selector: a.selector, text: a.text || undefined, value: a.value })));
+  useEffect(() => {
+    if (!session) return;
+    void call({ op: 'values', values: JSON.parse(valuesKey) }).catch(() => {});
+  }, [session, call, valuesKey]);
 
   // scale between preview pixels and page pixels
   useEffect(() => {
@@ -218,11 +232,17 @@ export function Picker({ form, setForm, onClose }: { form: FormState; setForm: (
       if (!hidden.includes(c.selector)) setHidden([...hidden, c.selector]);
       setLast({ kind: 'hide', selector: c.selector, chain: r.chain, level });
     } else {
-      const action: FormAction = { type: mode, selector: c.selector, text: '', duration: mode === 'click' ? 2 : 1.5, extra: {} };
+      const action: FormAction = { type: mode, selector: c.selector, text: '', value: '', duration: mode === 'click' ? 2 : 1.5, extra: {} };
       setForm({ ...f, actions: [...f.actions, action] });
       setLast({ kind: 'action', selector: c.selector, chain: r.chain, level });
+      if (mode === 'type') focusValue.current = f.actions.length;
     }
     setHover(null);
+  };
+
+  const setValue = (i: number, value: string) => {
+    const f = formRef.current;
+    setForm({ ...f, actions: f.actions.map((a, j) => (j === i ? { ...a, value } : a)) });
   };
 
   /** replaces the last pick with its parent (+1) or child (-1) */
@@ -342,7 +362,9 @@ export function Picker({ form, setForm, onClose }: { form: FormState; setForm: (
             <p className="hint">
               {mode === 'hide'
                 ? 'Klicke auf Banner, Chat-Widgets o. Ä. Sie verschwinden sofort aus der Vorschau und fehlen im Video.'
-                : 'Zeige auf ein Element und klicke es an. Scrollen mit Mausrad oder Wischen.'}
+                : mode === 'type'
+                  ? 'Klicke auf ein Eingabefeld (Suche, Formular) und gib dann den Text ein. Im Video tippt Glide ihn Zeichen für Zeichen ein.'
+                  : 'Zeige auf ein Element und klicke es an. Scrollen mit Mausrad oder Wischen.'}
             </p>
             {last && (
               <div className="picker-last">
@@ -357,16 +379,26 @@ export function Picker({ form, setForm, onClose }: { form: FormState; setForm: (
               </div>
             )}
             <div>
-              <h3>Hover &amp; Klicks</h3>
+              <h3>Hover, Klicks &amp; Eingaben</h3>
               {form.actions.length === 0 && <p className="small muted">Noch keine.</p>}
               <ol className="picker-list">
                 {form.actions.map((a, i) => (
                   <li key={i}>
                     <span className="picker-num">{i + 1}</span>
-                    <span>{a.type === 'click' ? 'Klick' : 'Hover'}</span>
+                    <span>{ACTION_LABELS[a.type]}</span>
                     <code title={a.selector}>{a.selector || '–'}</code>
                     <button type="button" className="btn ghost small danger" aria-label="Entfernen"
                       onClick={() => setForm({ ...form, actions: form.actions.filter((_, j) => j !== i) })}>✕</button>
+                    {a.type === 'type' && (
+                      <input className="picker-value" aria-label={`Text für Eingabe ${i + 1}`} placeholder="Text zum Eintippen"
+                        value={a.value} onChange={(e) => setValue(i, e.target.value)}
+                        ref={(el) => {
+                          if (el && focusValue.current === i) {
+                            focusValue.current = null;
+                            el.focus();
+                          }
+                        }} />
+                    )}
                   </li>
                 ))}
               </ol>

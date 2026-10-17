@@ -10,6 +10,9 @@
  *  - frame extraction from the video (ffmpeg) for visual inspection
  *  - hover/click actions: real :hover transitions and click handlers, scroll
  *    halts during actions, links do not navigate, cursor fades in and out
+ *  - type actions: text appears character by character through real key
+ *    events, replaces existing text, the caret follows the virtual clock
+ *    (two recordings are bit-identical)
  */
 import { execFileSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
@@ -138,16 +141,23 @@ function contactSheet(file: string, png: string, from: number, to: number, step:
 const ACTION_PROBE = `(() => {
   const sc = (s) => new DOMMatrix(getComputedStyle(document.querySelector(s)).transform).a;
   const cur = document.getElementById('__glide-cursor');
+  const q = document.getElementById('q');
   return {
     b1: sc('#b1'), b2: sc('#b2'),
     acc: +getComputedStyle(document.querySelector('.acc-body')).opacity,
     path: location.pathname, awayClicks: window.awayClicks,
     cursor: cur ? +cur.style.opacity : 0,
     hovered: Array.from(document.querySelectorAll(':hover')).map((e) => e.id).filter(Boolean).join(','),
+    q: q.value, echo: document.getElementById('echo').textContent, keys: window.keys, allKeys: window.allKeys,
+    email: document.getElementById('email').value,
+    caret: getComputedStyle(q).caretColor,
   };
 })()`;
 
-type ActionProbe = { b1: number; b2: number; acc: number; path: string; awayClicks: number; cursor: number; hovered: string };
+type ActionProbe = {
+  b1: number; b2: number; acc: number; path: string; awayClicks: number; cursor: number; hovered: string;
+  q: string; echo: string; keys: number; allKeys: number; email: string; caret: string;
+};
 
 async function runActions(url: string) {
   const warnings: string[] = [];
@@ -166,11 +176,15 @@ async function runActions(url: string) {
       { type: 'hover', selector: '#b1', duration: 0.8 },
       { type: 'hover', selector: '#b2', duration: 0.8 },
       { type: 'click', selector: '#away', duration: 0.5 },
+      { type: 'type', selector: '#q', value: 'Glide Showcase', duration: 1.2 },
+      { type: 'type', selector: '#echo', value: 'kein Feld', duration: 0.3 },
+      { type: 'type', selector: '#email', value: 'max@kunde.de', duration: 0.5 },
       { type: 'hover', selector: '#does-not-exist' },
     ],
   });
+  const output = path.join(outDir, 'e2e-actions.mp4');
   const r = await record(config, {
-    output: path.join(outDir, 'e2e-actions.mp4'),
+    output,
     probe: ACTION_PROBE,
     warn: (m) => { warnings.push(m); console.log(`  ⚠ ${m}`); },
   });
@@ -180,8 +194,8 @@ async function runActions(url: string) {
   const segs = r.scrollPositions.map((_, i) => (i < intro ? null : segmentAt(r.timeline, (i - intro) / fps)));
   const norm = (v: number) => (v - 1) / 0.15;
 
-  check('missing element is skipped with a warning', r.actions.length === 4 && warnings.some((w) => w.includes('#does-not-exist')));
-  check('actions run top to bottom', r.actions.map((a) => a.selector).join(' ') === '#b1 #b2 .acc button #away');
+  check('missing element is skipped with a warning', r.actions.length === 7 && warnings.some((w) => w.includes('#does-not-exist')));
+  check('actions run top to bottom', r.actions.map((a) => a.selector).join(' ') === '#b1 #b2 .acc button #away #q #echo #email');
   check('#b1 and #b2 share one stop', r.actions[0].y === r.actions[1].y);
   const actionFrames = segs.map((s, i) => (s?.segment.kind === 'action' ? i : -1)).filter((i) => i >= 0);
   const still = actionFrames.every((i) => Math.abs(r.scrollPositions[i] - (segs[i]!.segment as { y: number }).y) <= 1);
@@ -199,6 +213,37 @@ async function runActions(url: string) {
   check('cursor hidden before actions and at the end, visible during them',
     cur.slice(0, intro).every((c) => c === 0) && cur[cur.length - 1] === 0 && actionFrames.some((i) => cur[i] === 1) && intermediate(cur) >= 4);
   check('nothing hovered while scrolling away', p.slice(-10).every((x) => x.hovered === ''), p[p.length - 1].hovered);
+
+  const typed = 'Glide Showcase';
+  const qs = p.map((x) => x.q);
+  const grows = qs.every((v, i) => typed.startsWith(v) && (i === 0 || v.length >= qs[i - 1].length));
+  check('text is typed character by character', grows && new Set(qs).size === typed.length + 1 && qs[qs.length - 1] === typed,
+    `${new Set(qs).size - 1} steps`);
+  const last = p[p.length - 1];
+  check('typing sends real key events (keydown, input)', last.keys === typed.length && last.echo === typed, `${last.keys} keydowns`);
+  check('existing text in the field is replaced', last.email === 'max@kunde.de', last.email);
+  check('no keys are sent when the click did not focus a text field',
+    warnings.some((w) => w.includes('#echo') && w.includes('no text field')) && last.allKeys === typed.length + 'max@kunde.de'.length,
+    `${last.allKeys} keydowns in total`);
+  const done = qs.indexOf(typed);
+  const qFrames = segs.map((s, i) => (s && s.index === segs[done]?.index ? i : -1)).filter((i) => i >= 0);
+  check('cursor fades out while typing', qFrames.some((i) => cur[i] === 1) && cur[done] === 0);
+  const caret = p.map((x) => x.caret !== 'rgba(0, 0, 0, 0)');
+  const firstChar = qs.findIndex((v) => v.length > 0);
+  const qEnd = qFrames[qFrames.length - 1];
+  const hold = caret.slice(done, qEnd + 1);
+  check('caret hidden until typing, shown while typing, blinking afterwards, hidden once the action ends',
+    caret.slice(0, firstChar).every((c) => !c) && caret.slice(firstChar, done + 1).every((c) => c) &&
+      hold.includes(false) && hold.lastIndexOf(true) > hold.indexOf(false) && caret.slice(qEnd + 1).every((c) => !c),
+    hold.map((c) => (c ? '|' : '.')).join(''));
+
+  const again = path.join(outDir, 'e2e-actions-2.mp4');
+  await record(config, { output: again, probe: ACTION_PROBE });
+  const ha = frameHashes(output);
+  const hb = frameHashes(again);
+  const same = ha.filter((h, i) => h === hb[i]).length;
+  check('deterministic with hover, clicks and typing: two recordings are bit-identical', ha.length === hb.length && same === ha.length,
+    `${same}/${ha.length} frames`);
 }
 
 async function runPicker(url: string) {
@@ -206,7 +251,7 @@ async function runPicker(url: string) {
   const s = await PickerSession.open(parseConfig({ url, viewport: { width: 1280, height: 720 } }));
   try {
     const center = (r: { x: number; y: number; width: number; height: number }) => [r.x + r.width / 2, r.y + r.height / 2] as const;
-    const picked = async (x: number, y: number, mode: 'hover' | 'click' | 'hide') => {
+    const picked = async (x: number, y: number, mode: 'hover' | 'click' | 'hide' | 'type') => {
       const r = await s.inspect(x, y, mode);
       return r ? r.chain[r.start] : null;
     };
@@ -229,6 +274,19 @@ async function runPicker(url: string) {
     await s.setHidden(['div.consent-wrap']);
     const [gone] = await s.rects([{ selector: '.consent button' }]);
     check('hidden elements disappear from the preview', gone === null);
+    await s.scroll(720);
+    await new Promise((r) => setTimeout(r, 300));
+    const [label] = await s.rects([{ selector: 'label[for="q"]' }]);
+    const field = await picked(...center(label!), 'type');
+    check('type mode picks the text field, also via its label', field?.selector === '#q', field?.selector);
+    const [echo] = await s.rects([{ selector: '#echo' }]);
+    check('type mode ignores elements that are not text fields', (await s.inspect(echo!.x + 40, echo!.y + echo!.height / 2, 'type')) === null);
+    // the page mirrors the search field into #echo on `input` events
+    const echoes = async (text: string) => (await s.rects([{ selector: '#echo', text }]))[0] !== null;
+    await s.setValues([{ selector: '#q', value: 'Hallo Vorschau' }]);
+    check('texts show up in their fields in the preview (input event fired)', await echoes('hallo vorschau'));
+    await s.setValues([]);
+    check('removing a text restores the field', !(await echoes('hallo')));
     check('preview frame', ((await s.nextFrame(0))?.image.length ?? 0) > 1000);
   } finally {
     await s.close();
