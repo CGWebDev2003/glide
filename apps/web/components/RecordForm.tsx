@@ -131,10 +131,11 @@ export function RecordForm(p: Props) {
           <label className="field">
             <span>Tempo</span>
             <div className="input-combo">
+              {/* step "any": a step grid starts at min, so min 1 + step 50 made 600 px/s invalid and blocked the form */}
               <input
                 type="number"
                 min={1}
-                step={f.tempo === 'speed' ? 50 : 1}
+                step="any"
                 value={f.tempo === 'speed' ? f.speed : f.duration}
                 onChange={(e) => set(f.tempo === 'speed' ? 'speed' : 'duration', Number(e.target.value))}
               />
