@@ -1,4 +1,4 @@
-import type { Page } from 'playwright';
+import type { CDPSession, Page } from 'playwright';
 import type { Action, Config } from './config.js';
 import { EASINGS } from './easing.js';
 
@@ -96,12 +96,15 @@ export class ActionPlayer {
   private released = false;
   /** type actions: null until the click has focused (and emptied) the field, false if there is none */
   private focused: boolean | null = null;
+  /** the type action being typed into its field, and how many of its characters are in */
+  private typing: ResolvedAction | null = null;
   private typed = 0;
   private caretShown = false;
   private warned = new Set<number>();
 
   constructor(
     private page: Page,
+    private cdp: CDPSession,
     private style: 'arrow' | 'touch' | 'none',
     private size: number,
     private warn: (m: string) => void,
@@ -112,6 +115,7 @@ export class ActionPlayer {
     const first = segment !== this.segment;
     if (first) {
       await this.release();
+      await this.finishTyping();
       await this.hideCaret();
       this.segment = segment;
       this.pressedAt = null;
@@ -160,7 +164,7 @@ export class ActionPlayer {
     if (a.type === 'type' && this.released) {
       await this.type(a, elapsed);
       // the pointer gets out of the way of the text, like on macOS
-      this.opacity = Math.min(this.opacity, 1 - clamp((elapsed - this.pressedAt! - PRESS) / FADE, 0, 1));
+      if (this.focused) this.opacity = Math.min(this.opacity, 1 - clamp((elapsed - this.pressedAt! - PRESS) / FADE, 0, 1));
     }
     // press feedback: shrink while down, spring back afterwards
     if (this.pressedAt !== null && !this.released) this.scale = 0.8;
@@ -173,6 +177,7 @@ export class ActionPlayer {
   async idle(dt: number): Promise<void> {
     this.segment = -1;
     await this.release();
+    await this.finishTyping();
     await this.hideCaret();
     if (this.mouseInside) {
       // leave the page so :hover ends and nothing else gets hovered while scrolling
@@ -190,19 +195,42 @@ export class ActionPlayer {
   private async type(a: ResolvedAction, elapsed: number) {
     if (this.focused === null) {
       this.focused = await this.page.evaluate(([s, t]) => window.__glide.prepareField(s, t) as boolean, [a.selector, a.text] as const);
-      if (!this.focused) this.warn(`${describeAction(a)}: no text field to type into, skipped`);
+      if (this.focused) this.typing = a;
+      else this.warn(`${describeAction(a)}: no text field to type into, skipped`);
     }
     if (!this.focused) return;
     const t = elapsed - typingStart(a);
     const n = typedCount(a.value!, a.typingSpeed, t);
-    if (n > this.typed) {
-      await this.page.keyboard.type([...a.value!].slice(this.typed, n).join(''));
-      this.typed = n;
-    }
+    await this.typeTo(n);
     // steady while typing, then blinking on the virtual clock
     const sinceKey = t - (n - 1) / a.typingSpeed;
     await this.page.evaluate((v) => window.__glide.caret(v), n > 0 && Math.floor(sinceKey / BLINK) % 2 === 0);
     this.caretShown = true;
+  }
+
+  /** Types the characters of the current type action up to the `n`-th (default: all). */
+  private async typeTo(n = Infinity) {
+    const chars = [...this.typing!.value!];
+    const to = Math.min(n, chars.length);
+    for (const ch of chars.slice(this.typed, to)) await this.key(ch);
+    this.typed = Math.max(this.typed, to);
+  }
+
+  /** Types what is left when the segment ends: with fast typing or a short (compressed) segment, the last characters can fall between two frames. */
+  private async finishTyping() {
+    if (this.typing) await this.typeTo();
+    this.typing = null;
+  }
+
+  /**
+   * One character as real key events. Playwright only knows the US layout
+   * and inserts anything else (umlauts, ß, emoji …) without keydown/keyup,
+   * so those are sent through CDP.
+   */
+  private async key(ch: string) {
+    if (/^[\x20-\x7e\n\r\t]$/.test(ch)) return this.page.keyboard.type(ch);
+    await this.cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: ch, text: ch, unmodifiedText: ch });
+    await this.cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: ch });
   }
 
   private async hideCaret() {

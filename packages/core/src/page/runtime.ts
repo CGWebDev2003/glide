@@ -378,10 +378,10 @@ export function installGlideRuntime(opts: { seed: number | null }): void {
     return null;
   };
 
+  // writable text fields; same rules as in page/picker-runtime.ts
   const TEXT_INPUTS = ['text', 'search', 'email', 'url', 'tel', 'password', 'number'];
   const isTextField = (el: Element | null | undefined): el is HTMLElement =>
-    el instanceof HTMLTextAreaElement ||
-    (el instanceof HTMLInputElement && TEXT_INPUTS.includes(el.type)) ||
+    ((el instanceof HTMLTextAreaElement || (el instanceof HTMLInputElement && TEXT_INPUTS.includes(el.type))) && !el.readOnly && !el.disabled) ||
     (el instanceof HTMLElement && el.isContentEditable);
   const fieldText = (el: HTMLElement) =>
     el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement ? el.value : el.textContent || '';

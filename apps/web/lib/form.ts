@@ -89,6 +89,13 @@ export const DEFAULT_FORM: FormState = {
 
 const lines = (s: string) => s.split('\n').map((l) => l.trim()).filter(Boolean);
 
+/**
+ * Changes an action's type. The form hides the text filter of type actions
+ * (an <input> has no text to match), so a filter set before must not stay.
+ */
+export const setActionType = (a: FormAction, type: FormAction['type']): FormAction =>
+  ({ ...a, type, ...(type === 'type' ? { text: '' } : {}) });
+
 /** Builds the config JSON (only non-default values, so it stays readable). */
 export function toConfig(f: FormState): Record<string, unknown> {
   const d = DEFAULT_FORM;

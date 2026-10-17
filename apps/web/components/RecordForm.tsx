@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { EASING_NAMES, PRESETS } from '@glide/core/options';
-import { DEFAULT_FORM, estimateDuration, fromConfig, toConfig, type FormAction, type FormState, type ViewportMode } from '@/lib/form';
+import { DEFAULT_FORM, estimateDuration, fromConfig, setActionType, toConfig, type FormAction, type FormState, type ViewportMode } from '@/lib/form';
 import type { Project } from '@/lib/types';
 import { Picker } from './Picker';
 import { hostOf } from './format';
@@ -460,7 +460,8 @@ function ActionList({ actions, onChange }: { actions: FormAction[]; onChange: (a
         <ol className="actions">
           {actions.map((a, i) => (
             <li key={i} className="action">
-              <select aria-label="Aktion" value={a.type} onChange={(e) => update(i, { type: e.target.value as FormAction['type'] })}>
+              <select aria-label="Aktion" value={a.type}
+                onChange={(e) => onChange(actions.map((x, j) => (j === i ? setActionType(x, e.target.value as FormAction['type']) : x)))}>
                 <option value="hover">Hover</option>
                 <option value="click">Klick</option>
                 <option value="type">Text</option>

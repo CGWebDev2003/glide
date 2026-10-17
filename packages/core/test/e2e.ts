@@ -148,15 +148,15 @@ const ACTION_PROBE = `(() => {
     path: location.pathname, awayClicks: window.awayClicks,
     cursor: cur ? +cur.style.opacity : 0,
     hovered: Array.from(document.querySelectorAll(':hover')).map((e) => e.id).filter(Boolean).join(','),
-    q: q.value, echo: document.getElementById('echo').textContent, keys: window.keys, allKeys: window.allKeys,
-    email: document.getElementById('email').value,
+    q: q.value, echo: document.getElementById('echo').textContent, keys: window.keys, keyups: window.keyups, allKeys: window.allKeys,
+    email: document.getElementById('email').value, note: document.getElementById('note').textContent,
     caret: getComputedStyle(q).caretColor,
   };
 })()`;
 
 type ActionProbe = {
   b1: number; b2: number; acc: number; path: string; awayClicks: number; cursor: number; hovered: string;
-  q: string; echo: string; keys: number; allKeys: number; email: string; caret: string;
+  q: string; echo: string; keys: number; keyups: number; allKeys: number; email: string; note: string; caret: string;
 };
 
 async function runActions(url: string) {
@@ -176,9 +176,12 @@ async function runActions(url: string) {
       { type: 'hover', selector: '#b1', duration: 0.8 },
       { type: 'hover', selector: '#b2', duration: 0.8 },
       { type: 'click', selector: '#away', duration: 0.5 },
-      { type: 'type', selector: '#q', value: 'Glide Showcase', duration: 1.2 },
+      { type: 'type', selector: '#q', value: 'Glide Showcase München', duration: 1.2 },
       { type: 'type', selector: '#echo', value: 'kein Feld', duration: 0.3 },
-      { type: 'type', selector: '#email', value: 'max@kunde.de', duration: 0.5 },
+      // faster than the frame rate and no hold: the last characters still have to arrive
+      { type: 'type', selector: '#email', value: 'max@kunde.de', typingSpeed: 1000, duration: 0 },
+      { type: 'type', selector: '#ro', value: 'schreibgeschützt', duration: 0.3 },
+      { type: 'type', selector: '#note', value: 'Neu', duration: 0.5 },
       { type: 'hover', selector: '#does-not-exist' },
     ],
   });
@@ -194,8 +197,8 @@ async function runActions(url: string) {
   const segs = r.scrollPositions.map((_, i) => (i < intro ? null : segmentAt(r.timeline, (i - intro) / fps)));
   const norm = (v: number) => (v - 1) / 0.15;
 
-  check('missing element is skipped with a warning', r.actions.length === 7 && warnings.some((w) => w.includes('#does-not-exist')));
-  check('actions run top to bottom', r.actions.map((a) => a.selector).join(' ') === '#b1 #b2 .acc button #away #q #echo #email');
+  check('missing element is skipped with a warning', r.actions.length === 9 && warnings.some((w) => w.includes('#does-not-exist')));
+  check('actions run top to bottom', r.actions.map((a) => a.selector).join(' ') === '#b1 #b2 .acc button #away #q #echo #email #ro #note');
   check('#b1 and #b2 share one stop', r.actions[0].y === r.actions[1].y);
   const actionFrames = segs.map((s, i) => (s?.segment.kind === 'action' ? i : -1)).filter((i) => i >= 0);
   const still = actionFrames.every((i) => Math.abs(r.scrollPositions[i] - (segs[i]!.segment as { y: number }).y) <= 1);
@@ -214,17 +217,24 @@ async function runActions(url: string) {
     cur.slice(0, intro).every((c) => c === 0) && cur[cur.length - 1] === 0 && actionFrames.some((i) => cur[i] === 1) && intermediate(cur) >= 4);
   check('nothing hovered while scrolling away', p.slice(-10).every((x) => x.hovered === ''), p[p.length - 1].hovered);
 
-  const typed = 'Glide Showcase';
+  const typed = 'Glide Showcase München';
   const qs = p.map((x) => x.q);
   const grows = qs.every((v, i) => typed.startsWith(v) && (i === 0 || v.length >= qs[i - 1].length));
   check('text is typed character by character', grows && new Set(qs).size === typed.length + 1 && qs[qs.length - 1] === typed,
     `${new Set(qs).size - 1} steps`);
   const last = p[p.length - 1];
-  check('typing sends real key events (keydown, input)', last.keys === typed.length && last.echo === typed, `${last.keys} keydowns`);
-  check('existing text in the field is replaced', last.email === 'max@kunde.de', last.email);
-  check('no keys are sent when the click did not focus a text field',
-    warnings.some((w) => w.includes('#echo') && w.includes('no text field')) && last.allKeys === typed.length + 'max@kunde.de'.length,
+  check('typing sends real key events (keydown, keyup, input), umlauts too',
+    last.keys === typed.length && last.keyups === typed.length && last.echo === typed, `${last.keys} keydowns, ${last.keyups} keyups`);
+  check('existing text in the field is replaced, also when typing outpaces the frame rate', last.email === 'max@kunde.de', last.email);
+  check('existing text in a contenteditable is replaced', last.note === 'Neu', last.note ?? '');
+  const skipped = (sel: string) => warnings.some((w) => w.includes(sel) && w.includes('no text field'));
+  check('no keys are sent when the click did not focus a writable text field',
+    skipped('#echo') && skipped('#ro') && last.allKeys === typed.length + 'max@kunde.de'.length + 'Neu'.length,
     `${last.allKeys} keydowns in total`);
+  const echoAction = r.actions.findIndex((a) => a.selector === '#echo');
+  const echoFrames = segs.map((s, i) => (s?.segment.kind === 'action' && s.segment.action === echoAction ? i : -1)).filter((i) => i >= 0);
+  check('pointer stays when there is nothing to type into', echoFrames.length > 0 && cur[echoFrames[echoFrames.length - 1]] === 1,
+    `${cur[echoFrames[echoFrames.length - 1]]}`);
   const done = qs.indexOf(typed);
   const qFrames = segs.map((s, i) => (s && s.index === segs[done]?.index ? i : -1)).filter((i) => i >= 0);
   check('cursor fades out while typing', qFrames.some((i) => cur[i] === 1) && cur[done] === 0);
@@ -281,6 +291,8 @@ async function runPicker(url: string) {
     check('type mode picks the text field, also via its label', field?.selector === '#q', field?.selector);
     const [echo] = await s.rects([{ selector: '#echo' }]);
     check('type mode ignores elements that are not text fields', (await s.inspect(echo!.x + 40, echo!.y + echo!.height / 2, 'type')) === null);
+    const [ro] = await s.rects([{ selector: '#ro' }]);
+    check('type mode skips read-only fields', (await s.inspect(...center(ro!), 'type')) === null);
     // the page mirrors the search field into #echo on `input` events
     const echoes = async (text: string) => (await s.rects([{ selector: '#echo', text }]))[0] !== null;
     await s.setValues([{ selector: '#q', value: 'Hallo Vorschau' }]);
@@ -288,6 +300,20 @@ async function runPicker(url: string) {
     await s.setValues([]);
     check('removing a text restores the field', !(await echoes('hallo')));
     check('preview frame', ((await s.nextFrame(0))?.image.length ?? 0) > 1000);
+  } finally {
+    await s.close();
+  }
+}
+
+/** A field rendered after the preview opened (embedded widgets, SPAs) still gets its text. */
+async function runPickerLate(url: string) {
+  const s = await PickerSession.open(parseConfig({ url, viewport: { width: 1280, height: 720 } }));
+  try {
+    await s.setValues([{ selector: '#late', value: 'Spät da' }]);
+    const before = (await s.rects([{ selector: '#late' }]))[0];
+    await new Promise((r) => setTimeout(r, 2500));
+    const [shown] = await s.rects([{ selector: '#late', text: 'spät da' }]);
+    check('texts reach fields that show up after the preview opened', before === null && shown !== null);
   } finally {
     await s.close();
   }
@@ -349,6 +375,7 @@ try {
   void c;
 
   await runPicker(`${url}actions.html`);
+  await runPickerLate(`${url}late.html`);
   await runActions(`${url}actions.html`);
   await runContainer(`${url}container.html`);
   contactSheet(path.join(outDir, 'e2e-actions.mp4'), path.join(outDir, 'sheet-actions.png'), 0, 400, 12);

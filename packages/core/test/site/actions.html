@@ -22,8 +22,9 @@
     .consent { background: #fff; color: #000; padding: 12px 16px; border-radius: 10px; font-size: 14px; display: flex; gap: 12px; align-items: center; }
     #away { display: inline-block; margin-top: 6vh; font-size: 28px; color: #ffbe0b; }
     .search { display: flex; gap: 16px; align-items: center; }
-    .search input, #email { font: 28px system-ui; padding: 14px 18px; width: 520px; border: 2px solid #333; border-radius: 12px; background: #fff; color: #000; }
-    .search input:focus, #email:focus { outline: 3px solid #3a86ff; }
+    .search input, #email, #ro, #note { font: 28px system-ui; padding: 14px 18px; width: 520px; border: 2px solid #333; border-radius: 12px; background: #fff; color: #000; }
+    .search input:focus, #email:focus, #note:focus { outline: 3px solid #3a86ff; }
+    #ro, #note { display: block; margin-top: 16px; }
     #echo { min-height: 1.5em; margin: 16px 0 4vh; color: #06d6a0; }
   </style>
 </head>
@@ -51,6 +52,8 @@
     </form>
     <p id="echo"></p>
     <input id="email" type="email" value="alt@example.com" autocomplete="off">
+    <input id="ro" readonly value="nur lesen">
+    <div id="note" contenteditable="true">alter Text</div>
   </section>
   <section><h2>Filler</h2></section>
   <script>
@@ -62,6 +65,8 @@
     document.addEventListener('keydown', () => { window.allKeys++; }, true);
     const q = document.getElementById('q');
     q.addEventListener('keydown', () => { window.keys++; });
+    window.keyups = 0;
+    q.addEventListener('keyup', () => { window.keyups++; });
     q.addEventListener('input', () => { document.getElementById('echo').textContent = q.value; });
   </script>
 </body>

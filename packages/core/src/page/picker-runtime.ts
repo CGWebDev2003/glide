@@ -87,10 +87,10 @@ export function installPickerRuntime(): void {
   };
 
   const INTERACTIVE = 'a[href], button, [role="button"], [role="tab"], [role="link"], input, select, textarea, summary, label, [onclick], [tabindex]';
+  // writable text fields; same rules as in page/runtime.ts
   const TEXT_INPUTS = ['text', 'search', 'email', 'url', 'tel', 'password', 'number'];
   const isTextField = (el: Element | null | undefined): el is HTMLElement =>
-    el instanceof HTMLTextAreaElement ||
-    (el instanceof HTMLInputElement && TEXT_INPUTS.includes(el.type)) ||
+    ((el instanceof HTMLTextAreaElement || (el instanceof HTMLInputElement && TEXT_INPUTS.includes(el.type))) && !el.readOnly && !el.disabled) ||
     (el instanceof HTMLElement && el.isContentEditable);
   /** the text field at an element: itself, the field it is part of, or the one its label is for */
   const textField = (el: Element): HTMLElement | null => {
@@ -123,8 +123,8 @@ export function installPickerRuntime(): void {
     } else el.textContent = v;
     el.dispatchEvent(new Event('input', { bubbles: true }));
   };
-  /** fields showing a text from a type action, with their original content */
-  const filled = new Map<HTMLElement, string>();
+  /** fields showing a text from a type action: their original content and the text written */
+  const filled = new Map<HTMLElement, { original: string; value: string }>();
 
   let hideStyle: HTMLStyleElement | null = null;
 
@@ -165,21 +165,27 @@ export function installPickerRuntime(): void {
         return e ? rect(e) : null;
       });
     },
-    /** shows the texts of type actions in their fields; fields no longer listed get their content back */
+    /**
+     * Shows the texts of type actions in their fields; fields no longer listed
+     * get their content back. Each text is written once (the page may reformat
+     * it, e.g. an input mask), so this can run again for fields that show up later.
+     */
     setValues(values: { selector: string; text?: string; value: string }[]) {
       const want = new Map<HTMLElement, string>();
       for (const { selector, text, value } of values) {
         const el = find(selector, text);
         if (isTextField(el)) want.set(el, value);
       }
-      for (const [el, original] of filled) {
+      for (const [el, f] of filled) {
         if (want.has(el)) continue;
         filled.delete(el);
-        write(el, original);
+        write(el, f.original);
       }
-      for (const [el, v] of want) {
-        if (!filled.has(el)) filled.set(el, read(el));
-        if (read(el) !== v) write(el, v);
+      for (const [el, value] of want) {
+        const f = filled.get(el);
+        if (f?.value === value) continue;
+        filled.set(el, { original: f ? f.original : read(el), value });
+        write(el, value);
       }
     },
     setHidden(selectors: string[]) {

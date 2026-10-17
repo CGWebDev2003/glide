@@ -31,6 +31,7 @@ export class PickerSession {
   private frame: PickFrame | null = null;
   private waiters = new Set<() => void>();
   private targets: PickTarget[] = [];
+  private values: PickValue[] = [];
   private closed = false;
 
   private constructor(
@@ -76,10 +77,12 @@ export class PickerSession {
   /**
    * Measures the targets right away, so the marks match the frame they are
    * shown on. Chromium sends the next frame only after the ack, which keeps
-   * slow clients from piling up frames.
+   * slow clients from piling up frames. Fields that showed up since the last
+   * frame (embedded widgets, SPAs) get their texts.
    */
   private async onFrame(data: string, sessionId: number) {
     try {
+      if (this.values.length) await this.applyValues().catch(() => {});
       const rects = this.targets.length ? await this.rects(this.targets).catch(() => this.frame?.rects ?? []) : [];
       this.publish(Buffer.from(data, 'base64'), rects);
     } finally {
@@ -132,7 +135,12 @@ export class PickerSession {
 
   /** Shows the texts of type actions in their fields (fields left out get their content back). */
   async setValues(values: PickValue[]): Promise<void> {
-    await this.page.evaluate((v) => window.__glidePick.setValues(v), values);
+    this.values = values;
+    await this.applyValues();
+  }
+
+  private applyValues() {
+    return this.page.evaluate((v) => window.__glidePick.setValues(v), this.values);
   }
 
   /** Viewport rects of action targets (null = not found or not visible). */
