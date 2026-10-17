@@ -4,10 +4,12 @@ import type { EasingName } from '@glide/core/options';
 export type ViewportMode = 'desktop' | 'laptop' | 'mobile' | 'custom';
 
 export interface FormAction {
-  type: 'hover' | 'click';
+  type: 'hover' | 'click' | 'type';
   selector: string;
   /** optional: only elements containing this text */
   text: string;
+  /** type: the text that is typed into the field */
+  value: string;
   duration: number;
   /** keys the form has no field for (e.g. moveDuration) */
   extra: Record<string, unknown>;
@@ -87,6 +89,13 @@ export const DEFAULT_FORM: FormState = {
 
 const lines = (s: string) => s.split('\n').map((l) => l.trim()).filter(Boolean);
 
+/**
+ * Changes an action's type. The form hides the text filter of type actions
+ * (an <input> has no text to match), so a filter set before must not stay.
+ */
+export const setActionType = (a: FormAction, type: FormAction['type']): FormAction =>
+  ({ ...a, type, ...(type === 'type' ? { text: '' } : {}) });
+
 /** Builds the config JSON (only non-default values, so it stays readable). */
 export function toConfig(f: FormState): Record<string, unknown> {
   const d = DEFAULT_FORM;
@@ -112,12 +121,13 @@ export function toConfig(f: FormState): Record<string, unknown> {
   c.outroDuration = f.outroDuration;
   if (lines(f.hideSelectors).length) c.hideSelectors = lines(f.hideSelectors);
   const actions = f.actions
-    .filter((a) => a.selector.trim())
+    .filter((a) => a.selector.trim() && (a.type !== 'type' || a.value))
     .map((a) => ({
       ...a.extra,
       type: a.type,
       selector: a.selector.trim(),
       ...(a.text.trim() ? { text: a.text.trim() } : {}),
+      ...(a.type === 'type' ? { value: a.value } : {}),
       duration: a.duration,
     }));
   if (actions.length) c.actions = actions;
@@ -187,11 +197,12 @@ export function fromConfig(raw: Record<string, unknown>, name = ''): FormState {
 }
 
 function toFormAction(raw: Record<string, unknown>): FormAction {
-  const { type, selector, text, duration, ...extra } = raw;
+  const { type, selector, text, value, duration, ...extra } = raw;
   return {
-    type: type === 'click' ? 'click' : 'hover',
+    type: type === 'click' || type === 'type' ? type : 'hover',
     selector: str(selector, ''),
     text: str(text, ''),
+    value: str(value, ''),
     duration: num(duration, 1.5),
     extra,
   };

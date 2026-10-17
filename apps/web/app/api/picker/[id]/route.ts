@@ -1,4 +1,4 @@
-import type { PickMode } from '@glide/core';
+import type { PickMode, PickValue } from '@glide/core';
 import { picker } from '@/lib/server/picker';
 import { errorResponse, json } from '@/lib/server/http';
 
@@ -9,8 +9,10 @@ type Op =
   | { op: 'inspect'; x: number; y: number; mode: PickMode }
   | { op: 'scroll'; dy: number; x?: number; y?: number }
   | { op: 'hide'; selectors: string[] }
-  | { op: 'targets'; targets: { selector: string; text?: string }[] };
+  | { op: 'targets'; targets: { selector: string; text?: string }[] }
+  | { op: 'values'; values: PickValue[] };
 
+const MODES: PickMode[] = ['hover', 'click', 'type', 'hide'];
 const finite = (...n: unknown[]) => n.every((v) => typeof v === 'number' && Number.isFinite(v));
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -21,7 +23,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       switch (o.op) {
         case 'inspect':
           if (!finite(o.x, o.y)) throw new Error('x/y fehlen');
-          return { result: await s.inspect(o.x, o.y, o.mode === 'hide' || o.mode === 'click' ? o.mode : 'hover') };
+          return { result: await s.inspect(o.x, o.y, MODES.includes(o.mode) ? o.mode : 'hover') };
         case 'scroll':
           if (!finite(o.dy)) throw new Error('dy fehlt');
           await s.scroll(Math.max(-5000, Math.min(5000, o.dy)), finite(o.x) ? o.x : undefined, finite(o.y) ? o.y : undefined);
@@ -31,6 +33,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           return { ok: true };
         case 'targets':
           await s.setTargets((o.targets ?? []).filter((t) => t && typeof t.selector === 'string'));
+          return { ok: true };
+        case 'values':
+          await s.setValues((o.values ?? []).filter((v) => v && typeof v.selector === 'string' && typeof v.value === 'string'));
           return { ok: true };
         default:
           throw new Error('unbekannte Aktion');

@@ -8,6 +8,7 @@
     "build": "next build",
     "start": "next start -p 4321",
     "typecheck": "tsc --noEmit",
+    "test": "tsx --test lib/*.test.ts",
     "icons": "node scripts/icons.mjs"
   },
   "dependencies": {
@@ -22,6 +23,7 @@
     "@types/node": "^22.20.5",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "tsx": "^4.23.15",
     "typescript": "^5.9.3"
   }
 }

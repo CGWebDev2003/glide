@@ -31,5 +31,6 @@ export {
   type PickCandidate,
   type PickResult,
   type PickTarget,
+  type PickValue,
   type PickFrame,
 } from './picker.js';

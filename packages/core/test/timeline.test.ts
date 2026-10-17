@@ -113,3 +113,12 @@ test('actions config: defaults and validation', () => {
   assert.equal(c.cursor.style, 'auto');
   assert.throws(() => parseConfig({ url: 'https://example.com', actions: [{ type: 'drag', selector: 'a' }] }), ConfigError);
 });
+
+test('type actions: need a value, typing speed defaults', () => {
+  const c = parseConfig({ url: 'https://example.com', actions: [{ type: 'type', selector: '#q', value: 'Hallo' }] });
+  assert.equal(c.actions[0].type, 'type');
+  assert.equal(c.actions[0].value, 'Hallo');
+  assert.equal(c.actions[0].typingSpeed, 12);
+  assert.throws(() => parseConfig({ url: 'https://example.com', actions: [{ type: 'type', selector: '#q' }] }), ConfigError);
+  assert.throws(() => parseConfig({ url: 'https://example.com', actions: [{ type: 'type', selector: '#q', value: '' }] }), ConfigError);
+});

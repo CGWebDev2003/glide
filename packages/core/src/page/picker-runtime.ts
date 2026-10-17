@@ -87,13 +87,56 @@ export function installPickerRuntime(): void {
   };
 
   const INTERACTIVE = 'a[href], button, [role="button"], [role="tab"], [role="link"], input, select, textarea, summary, label, [onclick], [tabindex]';
+  // writable text fields; same rules as in page/runtime.ts
+  const TEXT_INPUTS = ['text', 'search', 'email', 'url', 'tel', 'password', 'number'];
+  const isTextField = (el: Element | null | undefined): el is HTMLElement =>
+    ((el instanceof HTMLTextAreaElement || (el instanceof HTMLInputElement && TEXT_INPUTS.includes(el.type))) && !el.readOnly && !el.disabled) ||
+    (el instanceof HTMLElement && el.isContentEditable);
+  /** the text field at an element: itself, the field it is part of, or the one its label is for */
+  const textField = (el: Element): HTMLElement | null => {
+    const control = el.closest('label')?.control;
+    if (isTextField(control)) return control;
+    const field = el.closest('input, textarea, [contenteditable]');
+    return isTextField(field) ? field : null;
+  };
+
+  /** first visible match of an action target (optionally containing `text`) */
+  const find = (selector: string, text?: string): HTMLElement | null => {
+    let els: HTMLElement[] = [];
+    try { els = Array.from(document.querySelectorAll<HTMLElement>(selector)); } catch { return null; }
+    const needle = text ? text.trim().toLowerCase().replace(/\s+/g, ' ') : '';
+    for (const e of els) {
+      const r = e.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) continue;
+      if (needle && !(e.textContent || '').toLowerCase().replace(/\s+/g, ' ').includes(needle)) continue;
+      return e;
+    }
+    return null;
+  };
+
+  const read = (el: HTMLElement) => (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement ? el.value : el.textContent || '');
+  const write = (el: HTMLElement, v: string) => {
+    if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+      // the prototype's setter, so frameworks that track `value` (React …) notice the change
+      const proto = el instanceof HTMLInputElement ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype;
+      Object.getOwnPropertyDescriptor(proto, 'value')?.set?.call(el, v);
+    } else el.textContent = v;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+  /** fields showing a text from a type action: their original content and the text written */
+  const filled = new Map<HTMLElement, { original: string; value: string }>();
 
   let hideStyle: HTMLStyleElement | null = null;
 
   w.__glidePick = {
-    inspect(x: number, y: number, mode: 'hover' | 'click' | 'hide') {
+    inspect(x: number, y: number, mode: 'hover' | 'click' | 'hide' | 'type') {
       let el = document.elementFromPoint(x, y);
       if (!el || el === document.documentElement || el === document.body) return null;
+      if (mode === 'type') {
+        // only text fields can be typed into
+        const field = textField(el);
+        return field ? { start: 0, chain: [{ selector: selectorFor(field), label: label(field), rect: rect(field) }] } : null;
+      }
       // svg internals are not useful targets
       const svg = el.closest('svg');
       if (svg && svg.parentElement) el = svg.parentElement === document.body ? svg : svg.parentElement;
@@ -118,17 +161,32 @@ export function installPickerRuntime(): void {
     /** viewport rects of action targets (first visible match, optional text) */
     rects(targets: { selector: string; text?: string }[]) {
       return targets.map(({ selector, text }) => {
-        let els: Element[] = [];
-        try { els = Array.from(document.querySelectorAll(selector)); } catch { return null; }
-        const needle = text ? text.trim().toLowerCase().replace(/\s+/g, ' ') : '';
-        for (const e of els) {
-          const r = e.getBoundingClientRect();
-          if (r.width <= 0 || r.height <= 0) continue;
-          if (needle && !((e as HTMLElement).textContent || '').toLowerCase().replace(/\s+/g, ' ').includes(needle)) continue;
-          return { x: r.left, y: r.top, width: r.width, height: r.height };
-        }
-        return null;
+        const e = find(selector, text);
+        return e ? rect(e) : null;
       });
+    },
+    /**
+     * Shows the texts of type actions in their fields; fields no longer listed
+     * get their content back. Each text is written once (the page may reformat
+     * it, e.g. an input mask), so this can run again for fields that show up later.
+     */
+    setValues(values: { selector: string; text?: string; value: string }[]) {
+      const want = new Map<HTMLElement, string>();
+      for (const { selector, text, value } of values) {
+        const el = find(selector, text);
+        if (isTextField(el)) want.set(el, value);
+      }
+      for (const [el, f] of filled) {
+        if (want.has(el)) continue;
+        filled.delete(el);
+        write(el, f.original);
+      }
+      for (const [el, value] of want) {
+        const f = filled.get(el);
+        if (f?.value === value) continue;
+        filled.set(el, { original: f ? f.original : read(el), value });
+        write(el, value);
+      }
     },
     setHidden(selectors: string[]) {
       if (!hideStyle || !hideStyle.isConnected) {

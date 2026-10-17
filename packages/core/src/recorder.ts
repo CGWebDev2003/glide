@@ -147,7 +147,7 @@ export async function record(config: Config, opts: RecordOptions): Promise<Recor
       page.on('domcontentloaded', () => { navigatedTo ??= page.url(); });
     }
     const cursorStyle = config.cursor.style === 'auto' ? (isMobile ? 'touch' : 'arrow') : config.cursor.style;
-    const player = new ActionPlayer(page, cursorStyle, config.cursor.size, warn);
+    const player = new ActionPlayer(page, cdp, cursorStyle, config.cursor.size, warn);
 
     if (config.warmup > 0) {
       await page.evaluate((ms) => window.__glide.advance(ms), config.warmup * 1000);
@@ -325,6 +325,11 @@ async function preparePage(page: Page, c: Config): Promise<void> {
       : '',
     // smooth scroll-behavior would turn every scrollTo into an animation
     'html, body { scroll-behavior: auto !important; }',
+    // the caret blinks in real time and would flicker at random; only the
+    // field being typed into shows it (runtime: caret()), with the page's
+    // own caret-color if it sets one on the field
+    ':not([data-glide-caret], [data-glide-caret] *) { caret-color: transparent !important; }',
+    ':where([data-glide-caret]) { caret-color: auto; }',
     c.injectCss ?? '',
   ].join('\n');
   await page.addStyleTag({ content: css });

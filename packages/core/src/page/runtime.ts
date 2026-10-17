@@ -378,6 +378,27 @@ export function installGlideRuntime(opts: { seed: number | null }): void {
     return null;
   };
 
+  // writable text fields; same rules as in page/picker-runtime.ts
+  const TEXT_INPUTS = ['text', 'search', 'email', 'url', 'tel', 'password', 'number'];
+  const isTextField = (el: Element | null | undefined): el is HTMLElement =>
+    ((el instanceof HTMLTextAreaElement || (el instanceof HTMLInputElement && TEXT_INPUTS.includes(el.type))) && !el.readOnly && !el.disabled) ||
+    (el instanceof HTMLElement && el.isContentEditable);
+  const fieldText = (el: HTMLElement) =>
+    el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement ? el.value : el.textContent || '';
+
+  // The caret blinks in real time, so screenshots would catch it at random.
+  // Recordings hide it with injected CSS, except in the field being typed
+  // into (this attribute). Moving its caret right before a screenshot
+  // restarts the blink with the caret shown.
+  const CARET_ATTR = 'data-glide-caret';
+  let caretField: HTMLElement | null = null;
+  const showCaret = () => {
+    if (!caretField) return;
+    const s = window.getSelection();
+    s?.modify('move', 'backward', 'character');
+    s?.modify('move', 'forward', 'character');
+  };
+
   let cursorEl: HTMLElement | null = null;
   const CURSOR_ID = '__glide-cursor';
   const ensureCursor = (style: string, size: number) => {
@@ -483,6 +504,31 @@ export function installGlideRuntime(opts: { seed: number | null }): void {
       el.style.opacity = String(c.opacity);
     },
     setBlockNavigation(v: boolean) { blockNavigation = v; },
+    /**
+     * After the click of a type action: checks that it focused a text field
+     * of the target (keys must not go anywhere else) and empties the field
+     * (select all + delete, like a user would). False = nothing to type into.
+     */
+    prepareField(selector: string, text?: string) {
+      const target = findTarget(selector, text);
+      const el = document.activeElement;
+      if (!target || !isTextField(el) || !(el === target || target.contains(el))) return false;
+      if (fieldText(el)) {
+        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) el.select();
+        else window.getSelection()?.selectAllChildren(el);
+        document.execCommand('delete');
+      }
+      return true;
+    },
+    /** Shows the caret of the focused text field in the coming frames, or hides it again. */
+    caret(visible: boolean) {
+      const el = document.activeElement;
+      // an empty field has no caret position to move to, which keeps it from blinking at random
+      const field = visible && isTextField(el) && fieldText(el) ? el : null;
+      if (caretField && caretField !== field) caretField.removeAttribute(CARET_ATTR);
+      caretField = field;
+      caretField?.setAttribute(CARET_ATTR, '');
+    },
 
     /** Absolute top positions (document coordinates) of elements matching `selector`. */
     sectionTops(selector: string, minHeight: number) {
@@ -526,6 +572,7 @@ export function installGlideRuntime(opts: { seed: number | null }): void {
       syncAnimations();
       await syncVideoElements();
       await waitForImages(imageTimeout);
+      showCaret();
       // a last style/layout flush so the screenshot shows the final state
       void document.documentElement.offsetHeight;
       return w.__glide.getScrollY();

@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { EASING_NAMES, PRESETS } from '@glide/core/options';
-import { DEFAULT_FORM, estimateDuration, fromConfig, toConfig, type FormAction, type FormState, type ViewportMode } from '@/lib/form';
+import { DEFAULT_FORM, estimateDuration, fromConfig, setActionType, toConfig, type FormAction, type FormState, type ViewportMode } from '@/lib/form';
 import type { Project } from '@/lib/types';
 import { Picker } from './Picker';
 import { hostOf } from './format';
@@ -131,10 +131,11 @@ export function RecordForm(p: Props) {
           <label className="field">
             <span>Tempo</span>
             <div className="input-combo">
+              {/* step "any": a step grid starts at min, so min 1 + step 50 made 600 px/s invalid and blocked the form */}
               <input
                 type="number"
                 min={1}
-                step={f.tempo === 'speed' ? 50 : 1}
+                step="any"
                 value={f.tempo === 'speed' ? f.speed : f.duration}
                 onChange={(e) => set(f.tempo === 'speed' ? 'speed' : 'duration', Number(e.target.value))}
               />
@@ -193,7 +194,7 @@ export function RecordForm(p: Props) {
         </label>
       </Group>
 
-      <Group title="Hover & Klicks">
+      <Group title="Hover, Klicks & Eingaben">
         {pickButton}
         <ActionList actions={f.actions} onChange={(a) => set('actions', a)} />
       </Group>
@@ -453,21 +454,28 @@ function ActionList({ actions, onChange }: { actions: FormAction[]; onChange: (a
   const update = (i: number, patch: Partial<FormAction>) =>
     onChange(actions.map((a, j) => (j === i ? { ...a, ...patch } : a)));
   const add = (type: FormAction['type']) =>
-    onChange([...actions, { type, selector: '', text: '', duration: type === 'click' ? 2 : 1.5, extra: {} }]);
+    onChange([...actions, { type, selector: '', text: '', value: '', duration: type === 'click' ? 2 : 1.5, extra: {} }]);
   return (
     <>
       {actions.length > 0 && (
         <ol className="actions">
           {actions.map((a, i) => (
             <li key={i} className="action">
-              <select aria-label="Aktion" value={a.type} onChange={(e) => update(i, { type: e.target.value as FormAction['type'] })}>
+              <select aria-label="Aktion" value={a.type}
+                onChange={(e) => onChange(actions.map((x, j) => (j === i ? setActionType(x, e.target.value as FormAction['type']) : x)))}>
                 <option value="hover">Hover</option>
                 <option value="click">Klick</option>
+                <option value="type">Text</option>
               </select>
-              <input aria-label="CSS-Selektor" className="mono" placeholder=".button-primary" value={a.selector}
+              <input aria-label="CSS-Selektor" className="mono" placeholder={a.type === 'type' ? '#suche' : '.button-primary'} value={a.selector}
                 onChange={(e) => update(i, { selector: e.target.value })} />
-              <input aria-label="Text (optional)" placeholder="Text (optional)" value={a.text}
-                onChange={(e) => update(i, { text: e.target.value })} />
+              {a.type === 'type' ? (
+                <input aria-label="Text zum Eintippen" placeholder="Text zum Eintippen" required value={a.value}
+                  onChange={(e) => update(i, { value: e.target.value })} />
+              ) : (
+                <input aria-label="Text (optional)" placeholder="Text (optional)" value={a.text}
+                  onChange={(e) => update(i, { text: e.target.value })} />
+              )}
               <div className="input-unit">
                 <input aria-label="Dauer" type="number" min={0} step={0.5} value={a.duration}
                   onChange={(e) => update(i, { duration: e.target.value === '' ? 0 : Number(e.target.value) })} />
@@ -482,10 +490,12 @@ function ActionList({ actions, onChange }: { actions: FormAction[]; onChange: (a
       <div className="row-buttons">
         <button type="button" className="btn ghost small" onClick={() => add('hover')}>+ Hover</button>
         <button type="button" className="btn ghost small" onClick={() => add('click')}>+ Klick</button>
+        <button type="button" className="btn ghost small" onClick={() => add('type')}>+ Text</button>
       </div>
       <p className="hint">
-        Das Scrollen hält an jedem Element an, ein Cursor fährt hin und hovert oder klickt. Reihenfolge: von oben nach unten.
-        Links und Formulare öffnen keine neue Seite. Mit „Text“ wählst du unter mehreren Treffern das Element mit diesem Text.
+        Das Scrollen hält an jedem Element an, ein Cursor fährt hin und hovert, klickt oder klickt ins Feld und tippt den Text ein
+        (vorhandener Text wird ersetzt). Reihenfolge: von oben nach unten. Links und Formulare öffnen keine neue Seite.
+        Mit „Text (optional)“ wählst du bei Hover und Klick unter mehreren Treffern das Element mit diesem Text.
       </p>
     </>
   );

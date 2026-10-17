@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>glide late field test page</title>
+  <style>
+    body { margin: 0; padding: 12vh 8vw; background: #0f1115; color: #f3f1ea; font: 20px/1.5 system-ui, sans-serif; }
+    #late { width: 520px; min-height: 1.5em; padding: 14px 18px; border-radius: 12px; background: #fff; color: #000; font-size: 28px; }
+  </style>
+</head>
+<body>
+  <h1>Late</h1>
+  <div id="slot"></div>
+  <script>
+    // a field that shows up after the page has loaded, like an embedded newsletter widget
+    setTimeout(() => { document.getElementById('slot').innerHTML = '<div id="late" contenteditable="true"></div>'; }, 1000);
+  </script>
+</body>
+</html>
