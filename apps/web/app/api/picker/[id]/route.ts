@@ -10,15 +10,20 @@ type Op =
   | { op: 'scroll'; dy: number; x?: number; y?: number }
   | { op: 'hide'; selectors: string[] }
   | { op: 'targets'; targets: { selector: string; text?: string }[] }
-  | { op: 'values'; values: PickValue[] };
+  | { op: 'values'; values: PickValue[] }
+  /** tours: run one step in the preview / open the start page and run all steps */
+  | { op: 'run'; step: Record<string, unknown> }
+  | { op: 'replay'; steps: Record<string, unknown>[] };
 
-const MODES: PickMode[] = ['hover', 'click', 'type', 'hide'];
+const MODES: PickMode[] = ['hover', 'click', 'type', 'hide', 'scroll'];
 const finite = (...n: unknown[]) => n.every((v) => typeof v === 'number' && Number.isFinite(v));
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const id = (await params).id;
     const o = (await req.json()) as Op;
+    // checked before queueing, so a bad step can't hold up the session
+    const steps = o.op === 'run' ? await picker.steps([o.step]) : o.op === 'replay' ? await picker.steps(Array.isArray(o.steps) ? o.steps : []) : [];
     const res = await picker.use(id, async (s) => {
       switch (o.op) {
         case 'inspect':
@@ -37,6 +42,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         case 'values':
           await s.setValues((o.values ?? []).filter((v) => v && typeof v.selector === 'string' && typeof v.value === 'string'));
           return { ok: true };
+        case 'run':
+          return { result: await s.run(steps[0]) };
+        case 'replay':
+          return { result: await s.replay(steps) };
         default:
           throw new Error('unbekannte Aktion');
       }

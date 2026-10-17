@@ -12,7 +12,7 @@ export interface ResolvedAction extends Action {
   total: number;
 }
 
-type Rect = { x: number; y: number; width: number; height: number; docY: number; vw: number; vh: number };
+export type Rect = { x: number; y: number; width: number; height: number; docY: number; vw: number; vh: number; fixed: boolean };
 
 /** How long the mouse button stays down on a click (s). */
 const PRESS = 0.12;
@@ -36,8 +36,10 @@ export function actionDuration(a: Action): number {
   return a.moveDuration + Math.max(a.duration, a.type === 'click' ? PRESS + 0.05 : 0);
 }
 
-export const describeAction = (a: Action & { index: number }) =>
-  `action ${a.index + 1} (${a.type} "${a.selector}"${a.text ? ` with text "${a.text}"` : ''})`;
+export const describeAction = (a: Action & { index: number }) => {
+  const what = a.selector ?? a.url ?? a.key ?? (a.to !== undefined ? String(a.to) : '');
+  return `action ${a.index + 1} (${a.type}${what ? ` "${what}"` : ''}${a.text ? ` with text "${a.text}"` : ''})`;
+};
 
 export async function locate(page: Page, a: Action): Promise<Rect | null> {
   return page.evaluate(([sel, text]) => window.__glide.locate(sel, text) as Rect | null, [a.selector, a.text] as const);
@@ -53,6 +55,7 @@ export async function resolveActions(page: Page, c: Config, warn: (m: string) =>
   if (!c.actions.length) return [];
   const maxScroll = await page.evaluate(() => window.__glide.getMaxScroll() as number);
   const found: { a: Action; index: number; r: Rect }[] = [];
+  // scroll videos have no tour steps (parseConfig refuses them)
   for (const [index, a] of c.actions.entries()) {
     const r = await locate(page, a);
     if (r) found.push({ a, index, r });
@@ -62,18 +65,22 @@ export async function resolveActions(page: Page, c: Config, warn: (m: string) =>
 
   const out: ResolvedAction[] = [];
   for (const { a, index, r } of found) {
-    const margin = r.vh * 0.08;
-    const prev = out[out.length - 1];
-    const fits = (y: number) => r.docY >= y + margin && r.docY + r.height <= y + r.vh - margin;
-    let y: number;
-    if (prev && fits(prev.y)) y = prev.y;
-    else {
-      y = r.height > r.vh * 0.7 ? r.docY - r.vh * 0.12 : r.docY + r.height / 2 - r.vh / 2;
-      y = Math.round(Math.min(maxScroll, Math.max(0, y)));
-    }
+    const y = stopFor(r, out[out.length - 1]?.y, maxScroll);
     out.push({ ...a, index, y, total: actionDuration(a) });
   }
   return out;
+}
+
+/**
+ * Scroll position for acting on an element: `current` if it is already
+ * comfortably in view there, otherwise the element centred (tall elements:
+ * their top near the top of the viewport).
+ */
+export function stopFor(r: Rect, current: number | undefined, maxScroll: number): number {
+  const margin = r.vh * 0.08;
+  if (current !== undefined && r.docY >= current + margin && r.docY + r.height <= current + r.vh - margin) return current;
+  const y = r.height > r.vh * 0.7 ? r.docY - r.vh * 0.12 : r.docY + r.height / 2 - r.vh / 2;
+  return Math.round(Math.min(maxScroll, Math.max(0, y)));
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
@@ -101,6 +108,8 @@ export class ActionPlayer {
   private typed = 0;
   private caretShown = false;
   private warned = new Set<number>();
+  /** grows with every mouse button release (tours wait for the page to settle after a click) */
+  releases = 0;
 
   constructor(
     private page: Page,
@@ -173,6 +182,22 @@ export class ActionPlayer {
     await this.draw();
   }
 
+  /**
+   * The page was replaced (tours): the drawn cursor went with the old
+   * document, and the mouse button is up again.
+   */
+  reset(): void {
+    this.segment = -1;
+    this.pos = null;
+    this.opacity = 0;
+    this.scale = 1;
+    this.mouseInside = false;
+    this.pressedAt = null;
+    this.released = false;
+    this.typing = null;
+    this.caretShown = false;
+  }
+
   /** A frame outside any action: let go of the element and fade the cursor out. */
   async idle(dt: number): Promise<void> {
     this.segment = -1;
@@ -243,6 +268,7 @@ export class ActionPlayer {
     if (this.pressedAt !== null && !this.released) {
       this.released = true;
       await this.page.mouse.up();
+      this.releases++;
     }
   }
 

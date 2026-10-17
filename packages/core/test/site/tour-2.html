@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <title>glide tour test page 2</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; }
+    body { background: #1b1030; color: #f3f1ea; font: 20px/1.5 system-ui, sans-serif; padding: 12vh 8vw; min-height: 200vh; }
+    h1 { font-size: 96px; line-height: 1; margin-bottom: 6vh; animation: rise 1s ease both; }
+    @keyframes rise { from { opacity: 0; transform: translateY(40px); } }
+    .btn { padding: 24px 48px; font: 700 26px system-ui; border: 0; border-radius: 16px; color: #fff; background: #ff006e; }
+    .cookie { position: fixed; bottom: 0; left: 0; right: 0; padding: 24px; background: #fff; color: #000; }
+  </style>
+</head>
+<body>
+  <h1>Seite 2</h1>
+  <button class="btn" id="hello" type="button">Hallo</button>
+  <div class="cookie" id="cookie">Cookies?</div>
+  <script>
+    document.getElementById('hello').addEventListener('click', () => { window.hello = true; });
+    window.addEventListener('keydown', (e) => { if (e.key === 'Escape') window.escaped = true; });
+  </script>
+</body>
+</html>

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { EASING_NAMES } from './easing.js';
 
-import { PRESETS, type PresetName } from './options.js';
+import { PRESETS, RECORDING_KINDS, TOUR_ONLY_ACTIONS, type PresetName } from './options.js';
 
 export { PRESETS, type PresetName };
 
@@ -33,22 +33,37 @@ const scrollSchema = z
 
 const actionSchema = z
   .object({
-    /** hover: move the mouse onto the element and stay; click: move there and click it; type: click into the field and type `value`. */
-    type: z.enum(['hover', 'click', 'type']),
+    /**
+     * hover: move the mouse onto the element and stay; click: move there and click it;
+     * type: click into the field and type `value`.
+     * Tours only: scroll: scroll to `selector` (or `to`); wait: pause; goto: open `url`;
+     * press: press `key` (e.g. Escape to close a dialog).
+     */
+    type: z.enum(['hover', 'click', 'type', ...TOUR_ONLY_ACTIONS]),
     /** CSS selector of the element. */
-    selector: z.string().min(1),
+    selector: z.string().optional(),
     /** Only elements whose text contains this (case-insensitive) — picks one of several matches. */
     text: z.string().optional(),
     /** type: the text that is typed into the field (replaces what is in it). */
     value: z.string().optional(),
     /** type: characters per second. */
     typingSpeed: z.number().positive().default(12),
-    /** Seconds the cursor stays on the element after arriving (click: after the click; type: after typing). */
+    /** scroll without selector: "top", "bottom" or a position in px. */
+    to: z.union([z.enum(['top', 'bottom']), z.number().min(0)]).optional(),
+    /** goto: page to open, absolute or relative to the current page. */
+    url: z.string().min(1).optional(),
+    /** press: key name as in KeyboardEvent.key, e.g. "Escape", "Enter", "Tab". */
+    key: z.string().min(1).optional(),
+    /** Seconds the cursor stays on the element after arriving (click: after the click; type: after typing; scroll/goto/press: after it; wait: the pause). */
     duration: z.number().min(0).default(1.5),
     /** Seconds the cursor needs to travel to the element. */
     moveDuration: z.number().min(0).default(0.7),
   })
-  .refine((a) => a.type !== 'type' || !!a.value, { error: 'type actions need a "value" (the text to type)', path: ['value'] });
+  .refine((a) => !['hover', 'click', 'type'].includes(a.type) || !!a.selector?.trim(), { error: 'hover, click and type actions need a "selector"', path: ['selector'] })
+  .refine((a) => a.type !== 'type' || !!a.value, { error: 'type actions need a "value" (the text to type)', path: ['value'] })
+  .refine((a) => a.type !== 'scroll' || !!a.selector?.trim() || a.to !== undefined, { error: 'scroll steps need a "selector" or "to"', path: ['selector'] })
+  .refine((a) => a.type !== 'goto' || !!a.url, { error: 'goto steps need a "url"', path: ['url'] })
+  .refine((a) => a.type !== 'press' || !!a.key, { error: 'press steps need a "key"', path: ['key'] });
 
 const cursorSchema = z
   .object({
@@ -61,6 +76,12 @@ const cursorSchema = z
 
 export const configSchema = z.object({
   url: z.string().url(),
+  /**
+   * scroll: scroll through the page (continuous or in sections), actions run
+   * top to bottom on the way. tour: run `actions` as steps in the given order,
+   * following links to subpages and opening dialogs.
+   */
+  kind: z.enum(RECORDING_KINDS).default('scroll'),
   output: z.string().optional(),
   viewport: viewportSchema.default('desktop'),
   deviceScaleFactor: z.number().min(1).max(4).default(2),
@@ -98,7 +119,7 @@ export const configSchema = z.object({
   /** Virtual seconds to fast-forward before the first frame (e.g. preloaders). */
   warmup: z.number().min(0).default(0),
   hideSelectors: z.array(z.string()).default([]),
-  /** Elements to hover or click. Scrolling stops at each of them (top to bottom). */
+  /** scroll: elements to hover, click or type into; scrolling stops at each (top to bottom). tour: the steps, in order. */
   actions: z.array(actionSchema).default([]),
   /** Visible mouse cursor during actions. */
   cursor: cursorSchema,
@@ -161,6 +182,10 @@ export function parseConfig(input: unknown, source = 'config'): Config {
     throw new ConfigError(`Invalid ${source}:\n${lines.join('\n')}`);
   }
   const c = res.data;
+  if (c.kind === 'scroll') {
+    const i = c.actions.findIndex((a) => (TOUR_ONLY_ACTIONS as readonly string[]).includes(a.type));
+    if (i >= 0) throw new ConfigError(`Invalid ${source}: actions.${i}: "${c.actions[i].type}" steps need "kind": "tour"`);
+  }
   if (c.scrollDriver === 'custom' && !c.scrollHook) {
     throw new ConfigError(`Invalid ${source}: scrollDriver "custom" requires "scrollHook"`);
   }

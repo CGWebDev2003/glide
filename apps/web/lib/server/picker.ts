@@ -1,6 +1,6 @@
 import 'server-only';
 import { randomUUID } from 'node:crypto';
-import type { PickerSession } from '@glide/core';
+import type { Action, PickerSession } from '@glide/core';
 import { loadCore } from './core';
 
 /** Closed after this long without a request (the window was closed, the phone locked …). */
@@ -39,6 +39,12 @@ class PickerManager {
     const run = cur.busy.then(() => fn(cur.session));
     cur.busy = run.catch(() => {});
     return run;
+  }
+
+  /** Tour steps as sent by the form, with the recorder's defaults (an invalid step throws a ConfigError). */
+  async steps(raw: unknown[]): Promise<Action[]> {
+    const { parseConfig } = await loadCore();
+    return parseConfig({ url: 'https://example.com', kind: 'tour', actions: raw }, 'Schritt').actions;
   }
 
   async close(id?: string) {

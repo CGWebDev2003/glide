@@ -1,9 +1,9 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { normalizeUrl, toConfig, type FormAction, type FormState } from '@/lib/form';
+import { actionToConfig, newAction, normalizeUrl, previewSteps, toConfig, type ActionType, type FormAction, type FormState } from '@/lib/form';
 
-type Mode = 'hover' | 'click' | 'type' | 'hide';
+type Mode = 'hover' | 'click' | 'type' | 'scroll' | 'hide';
 type Rect = { x: number; y: number; width: number; height: number };
 type Candidate = { selector: string; label: string; rect: Rect };
 type Inspect = { start: number; chain: Candidate[] };
@@ -12,6 +12,8 @@ type Session = { id: string; width: number; height: number };
 type Frame = { url: string; marks: (Rect | null)[] };
 /** the last pick, so it can be widened/narrowed to a parent/child element or undone */
 type LastPick = { kind: 'action' | 'hide'; selector: string; chain: Candidate[]; level: number };
+type StepResult = { ok: boolean; navigated: boolean; url: string };
+type ReplayResult = { pageStart: number; failed: number[]; url: string };
 
 const MODES: { value: Mode; label: string; hint: string }[] = [
   { value: 'hover', label: 'Hover', hint: 'Maus drüber' },
@@ -19,8 +21,22 @@ const MODES: { value: Mode; label: string; hint: string }[] = [
   { value: 'type', label: 'Text', hint: 'eintippen' },
   { value: 'hide', label: 'Ausblenden', hint: 'nicht im Video' },
 ];
+const TOUR_MODES: { value: Mode; label: string; hint: string }[] = [
+  { value: 'click', label: 'Klick', hint: 'klickt wirklich' },
+  { value: 'hover', label: 'Hover', hint: 'Maus drüber' },
+  { value: 'type', label: 'Text', hint: 'eintippen' },
+  { value: 'scroll', label: 'Scrollen', hint: 'bis hierhin' },
+  { value: 'hide', label: 'Ausblenden', hint: 'nicht im Video' },
+];
 
-const ACTION_LABELS: Record<FormAction['type'], string> = { hover: 'Hover', click: 'Klick', type: 'Text' };
+const ACTION_LABELS: Record<ActionType, string> = {
+  hover: 'Hover', click: 'Klick', type: 'Text', scroll: 'Scrollen', wait: 'Pause', goto: 'Seite', press: 'Taste',
+};
+/** steps that change the page: removing one means running the rest again */
+const CHANGES_PAGE: ActionType[] = ['click', 'press', 'goto'];
+
+const stepTarget = (a: FormAction) =>
+  a.type === 'goto' ? a.url : a.type === 'press' ? a.key : a.type === 'wait' ? `${a.duration} s` : a.selector || (a.to ? { top: 'ganz nach oben', bottom: 'ganz nach unten' }[a.to] : '');
 
 const lines = (s: string) => s.split('\n').map((l) => l.trim()).filter(Boolean);
 
@@ -34,7 +50,14 @@ export function Picker({ form, setForm, onClose }: { form: FormState; setForm: (
   const [session, setSession] = useState<Session | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [frame, setFrame] = useState<Frame | null>(null);
-  const [mode, setMode] = useState<Mode>('hover');
+  const tour = form.kind === 'tour';
+  const [mode, setMode] = useState<Mode>(tour ? 'click' : 'hover');
+  /** tours: index of the first step on the page the preview shows (earlier steps were on pages left behind) */
+  const [pageStart, setPageStart] = useState(0);
+  /** tours: the preview runs steps; picking waits meanwhile */
+  const [busy, setBusy] = useState<string | null>(null);
+  const [pageUrl, setPageUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState<number[]>([]);
   const [hover, setHover] = useState<Inspect | null>(null);
   const [last, setLast] = useState<LastPick | null>(null);
   const [scale, setScale] = useState(1);
@@ -127,15 +150,62 @@ export function Picker({ form, setForm, onClose }: { form: FormState; setForm: (
     };
   }, [session]);
 
-  // the server measures the chosen actions with every frame (numbered boxes)
-  const targetsKey = JSON.stringify(form.actions.filter((a) => a.selector.trim()).map((a) => ({ selector: a.selector, text: a.text || undefined })));
+  /**
+   * Tours: opens the start page again and runs the steps, so the preview
+   * shows where they lead (after opening it, or after removing a step).
+   */
+  const replay = useCallback(async (actions: FormAction[]) => {
+    setBusy(actions.length ? 'Schritte werden nachgespielt…' : 'Seite wird neu geladen…');
+    try {
+      const data = await call({ op: 'replay', steps: previewSteps(actions) });
+      const r = data?.result as ReplayResult | undefined;
+      if (r) {
+        setPageStart(r.pageStart);
+        setPageUrl(r.url);
+        setFailed(r.failed);
+      }
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }, [call]);
+
+  /** Tours: runs a just added step in the preview (a click opens the dialog or the next page). */
+  const runStep = async (a: FormAction, index: number) => {
+    setBusy(a.type === 'click' ? 'Klick wird ausgeführt…' : 'Schritt wird ausgeführt…');
+    try {
+      const data = await call({ op: 'run', step: actionToConfig(a) });
+      const r = data?.result as StepResult | undefined;
+      if (r?.navigated) setPageStart(index + 1);
+      if (r) setPageUrl(r.url);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // a tour picks up where its steps lead
+  const replayed = useRef(false);
+  useEffect(() => {
+    if (!session || !tour || replayed.current) return;
+    replayed.current = true;
+    if (formRef.current.actions.length) void replay(formRef.current.actions);
+  }, [session, tour, replay]);
+
+  // the server measures the chosen actions with every frame (numbered boxes);
+  // in a tour only the steps on the page shown
+  const marked = form.actions.map((a, i) => ({ a, i }))
+    .filter(({ a, i }) => a.selector.trim() && ['hover', 'click', 'type', 'scroll'].includes(a.type) && (!tour || i >= pageStart));
+  const targetsKey = JSON.stringify(marked.map(({ a }) => ({ selector: a.selector, text: a.text || undefined })));
   useEffect(() => {
     if (!session) return;
     void call({ op: 'targets', targets: JSON.parse(targetsKey) }).catch(() => {});
   }, [session, call, targetsKey]);
 
   // texts to type show up in their fields right away
-  const valuesKey = JSON.stringify(form.actions.filter((a) => a.type === 'type' && a.selector.trim() && a.value)
+  const valuesKey = JSON.stringify(form.actions.filter((a, i) => a.type === 'type' && a.selector.trim() && a.value && (!tour || i >= pageStart))
     .map((a) => ({ selector: a.selector, text: a.text || undefined, value: a.value })));
   useEffect(() => {
     if (!session) return;
@@ -232,12 +302,31 @@ export function Picker({ form, setForm, onClose }: { form: FormState; setForm: (
       if (!hidden.includes(c.selector)) setHidden([...hidden, c.selector]);
       setLast({ kind: 'hide', selector: c.selector, chain: r.chain, level });
     } else {
-      const action: FormAction = { type: mode, selector: c.selector, text: '', value: '', duration: mode === 'click' ? 2 : 1.5, extra: {} };
+      const action = newAction(mode, { selector: c.selector });
       setForm({ ...f, actions: [...f.actions, action] });
       setLast({ kind: 'action', selector: c.selector, chain: r.chain, level });
       if (mode === 'type') focusValue.current = f.actions.length;
+      if (tour && (mode === 'click' || mode === 'hover')) void runStep(action, f.actions.length);
     }
     setHover(null);
+  };
+
+  /** Tours: adds a step without an element (pause, key); a key is pressed in the preview right away. */
+  const addStep = (type: ActionType, patch: Partial<FormAction> = {}) => {
+    const f = formRef.current;
+    const action = newAction(type, patch);
+    setForm({ ...f, actions: [...f.actions, action] });
+    setLast(null);
+    if (type === 'press') void runStep(action, f.actions.length);
+  };
+
+  /** Removes a step; in a tour, one that changed the page means running the others again. */
+  const removeStep = (i: number) => {
+    const f = formRef.current;
+    const actions = f.actions.filter((_, j) => j !== i);
+    setForm({ ...f, actions });
+    if (last?.kind === 'action' && f.actions[i]?.selector === last.selector) setLast(null);
+    if (tour && CHANGES_PAGE.includes(f.actions[i].type)) void replay(actions);
   };
 
   const setValue = (i: number, value: string) => {
@@ -266,7 +355,7 @@ export function Picker({ form, setForm, onClose }: { form: FormState; setForm: (
     if (last.kind === 'hide') setHidden(lines(f.hideSelectors).filter((s) => s !== last.selector));
     else {
       const i = f.actions.map((a) => a.selector).lastIndexOf(last.selector);
-      if (i >= 0) setForm({ ...f, actions: f.actions.filter((_, j) => j !== i) });
+      if (i >= 0) removeStep(i);
     }
     setLast(null);
   };
@@ -296,7 +385,7 @@ export function Picker({ form, setForm, onClose }: { form: FormState; setForm: (
   const onPointerUp = async (e: React.PointerEvent) => {
     const d = drag.current;
     drag.current = null;
-    if (!d || d.moved > 8 || e.button > 0) return;
+    if (!d || d.moved > 8 || e.button > 0 || busy) return;
     const p = toPage(e);
     try {
       const r = await inspect(p.x, p.y);
@@ -319,7 +408,7 @@ export function Picker({ form, setForm, onClose }: { form: FormState; setForm: (
       <div className="picker-body">
         <div className="picker-bar">
           <div className="segmented" role="radiogroup" aria-label="Modus">
-            {MODES.map((m) => (
+            {(tour ? TOUR_MODES : MODES).map((m) => (
               <button type="button" role="radio" aria-checked={mode === m.value} key={m.value}
                 className={mode === m.value ? 'on' : ''} onClick={() => { setMode(m.value); setHover(null); }}>
                 <strong>{m.label}</strong>
@@ -327,6 +416,15 @@ export function Picker({ form, setForm, onClose }: { form: FormState; setForm: (
               </button>
             ))}
           </div>
+          {tour && (
+            <div className="row-buttons picker-steps">
+              <button type="button" className="btn ghost small" disabled={!!busy} onClick={() => addStep('wait')} title="Pause im Video">+ Pause</button>
+              <button type="button" className="btn ghost small" disabled={!!busy} onClick={() => addStep('press', { key: 'Escape' })}
+                title="Escape drücken, z. B. um einen Dialog zu schließen">Esc</button>
+              <button type="button" className="btn ghost small" disabled={!!busy || !session} onClick={() => void replay(formRef.current.actions)}
+                title="Startseite neu laden und alle Schritte nachspielen">↻ Nachspielen</button>
+            </div>
+          )}
           <button type="button" className="btn primary" onClick={onClose}>Fertig</button>
         </div>
 
@@ -337,7 +435,7 @@ export function Picker({ form, setForm, onClose }: { form: FormState; setForm: (
             {session && (
               <div
                 ref={stage}
-                className={`picker-stage mode-${mode}`}
+                className={`picker-stage mode-${mode}${busy ? ' busy' : ''}`}
                 style={{ aspectRatio: `${session.width} / ${session.height}`, width: `min(100%, calc((100dvh - 190px) * ${session.width / session.height}))` }}
                 onPointerMove={onPointerMove}
                 onPointerDown={onPointerDown}
@@ -347,8 +445,9 @@ export function Picker({ form, setForm, onClose }: { form: FormState; setForm: (
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 {frame && <img src={frame.url} alt="Vorschau der Seite" draggable={false} decoding="sync" />}
                 {frame?.marks.map((r, i) => r && (
-                  <div key={i} className="picker-mark" style={box(r)}><span>{i + 1}</span></div>
+                  <div key={i} className="picker-mark" style={box(r)}><span>{(marked[i]?.i ?? i) + 1}</span></div>
                 ))}
+                {busy && <div className="picker-busy"><span>{busy}</span></div>}
                 {hoverCandidate && (
                   <div className={`picker-hl ${hoverCandidate.rect.y * scale < 26 ? 'below' : ''}`} style={box(hoverCandidate.rect)}>
                     <span>{hoverCandidate.label}</span>
@@ -364,8 +463,15 @@ export function Picker({ form, setForm, onClose }: { form: FormState; setForm: (
                 ? 'Klicke auf Banner, Chat-Widgets o. Ä. Sie verschwinden sofort aus der Vorschau und fehlen im Video.'
                 : mode === 'type'
                   ? 'Klicke auf ein Eingabefeld (Suche, Formular) und gib dann den Text ein. Im Video tippt Glide ihn Zeichen für Zeichen ein.'
-                  : 'Zeige auf ein Element und klicke es an. Scrollen mit Mausrad oder Wischen.'}
+                  : mode === 'scroll'
+                    ? 'Klicke auf einen Bereich: Im Video scrollt Glide dorthin, bevor es mit dem nächsten Schritt weitergeht.'
+                    : tour && mode === 'click'
+                      ? 'Klicke dich durch: Der Klick wird in der Vorschau ausgeführt, Dialoge gehen auf, Links öffnen die Unterseite. Danach wählst du dort weiter.'
+                      : 'Zeige auf ein Element und klicke es an. Scrollen mit Mausrad oder Wischen.'}
             </p>
+            {tour && pageUrl && (
+              <p className="small muted picker-page">Seite: <code title={pageUrl}>{shortUrl(pageUrl)}</code></p>
+            )}
             {last && (
               <div className="picker-last">
                 <span className="small muted">Zuletzt gewählt</span>
@@ -379,16 +485,17 @@ export function Picker({ form, setForm, onClose }: { form: FormState; setForm: (
               </div>
             )}
             <div>
-              <h3>Hover, Klicks &amp; Eingaben</h3>
+              <h3>{tour ? 'Schritte' : 'Hover, Klicks & Eingaben'}</h3>
               {form.actions.length === 0 && <p className="small muted">Noch keine.</p>}
               <ol className="picker-list">
-                {form.actions.map((a, i) => (
-                  <li key={i}>
-                    <span className="picker-num">{i + 1}</span>
+                {form.actions.map((a, i) => (tour || ['hover', 'click', 'type'].includes(a.type)) && (
+                  <li key={i} className={tour && i < pageStart ? 'done' : undefined}
+                    title={failed.includes(i) ? 'Beim Nachspielen nicht gefunden' : tour && i < pageStart ? 'auf einer vorherigen Seite' : undefined}>
+                    <span className={`picker-num${failed.includes(i) ? ' warn' : ''}`}>{i + 1}</span>
                     <span>{ACTION_LABELS[a.type]}</span>
-                    <code title={a.selector}>{a.selector || '–'}</code>
-                    <button type="button" className="btn ghost small danger" aria-label="Entfernen"
-                      onClick={() => setForm({ ...form, actions: form.actions.filter((_, j) => j !== i) })}>✕</button>
+                    <code title={stepTarget(a)}>{stepTarget(a) || '–'}</code>
+                    <button type="button" className="btn ghost small danger" aria-label="Entfernen" disabled={!!busy}
+                      onClick={() => removeStep(i)}>✕</button>
                     {a.type === 'type' && (
                       <input className="picker-value" aria-label={`Text für Eingabe ${i + 1}`} placeholder="Text zum Eintippen"
                         value={a.value} onChange={(e) => setValue(i, e.target.value)}
@@ -423,3 +530,12 @@ export function Picker({ form, setForm, onClose }: { form: FormState; setForm: (
     document.body,
   );
 }
+
+const shortUrl = (u: string) => {
+  try {
+    const url = new URL(u);
+    return `${url.pathname}${url.search}` || '/';
+  } catch {
+    return u;
+  }
+};

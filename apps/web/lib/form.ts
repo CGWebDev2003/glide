@@ -3,13 +3,25 @@ import type { EasingName } from '@glide/core/options';
 
 export type ViewportMode = 'desktop' | 'laptop' | 'mobile' | 'custom';
 
+export type ActionType = 'hover' | 'click' | 'type' | 'scroll' | 'wait' | 'goto' | 'press';
+
+/** Steps a scroll video can do; tours can do all of ActionType. */
+export const SCROLL_ACTIONS: readonly ActionType[] = ['hover', 'click', 'type'];
+
 export interface FormAction {
-  type: 'hover' | 'click' | 'type';
+  type: ActionType;
+  /** hover/click/type, scroll to an element */
   selector: string;
   /** optional: only elements containing this text */
   text: string;
   /** type: the text that is typed into the field */
   value: string;
+  /** scroll without element: '' = to the element, 'top', 'bottom' */
+  to: '' | 'top' | 'bottom';
+  /** goto: the page to open */
+  url: string;
+  /** press: the key, e.g. Escape */
+  key: string;
   duration: number;
   /** keys the form has no field for (e.g. moveDuration) */
   extra: Record<string, unknown>;
@@ -18,6 +30,8 @@ export interface FormAction {
 export interface FormState {
   url: string;
   name: string;
+  /** scroll video or click-through tour */
+  kind: 'scroll' | 'tour';
   viewport: ViewportMode;
   width: number;
   height: number;
@@ -55,6 +69,7 @@ export interface FormState {
 export const DEFAULT_FORM: FormState = {
   url: '',
   name: '',
+  kind: 'scroll',
   viewport: 'desktop',
   width: 1280,
   height: 800,
@@ -89,28 +104,84 @@ export const DEFAULT_FORM: FormState = {
 
 const lines = (s: string) => s.split('\n').map((l) => l.trim()).filter(Boolean);
 
+/** A new, empty step of this type. */
+export const newAction = (type: ActionType, patch: Partial<FormAction> = {}): FormAction => ({
+  type, selector: '', text: '', value: '', to: '', url: '', key: type === 'press' ? 'Escape' : '',
+  duration: type === 'click' ? 2 : 1.5, extra: {}, ...patch,
+});
+
+/** The step has what it needs (incomplete ones are left out of the config). */
+export function isComplete(a: FormAction): boolean {
+  switch (a.type) {
+    case 'hover':
+    case 'click':
+      return !!a.selector.trim();
+    case 'type':
+      return !!a.selector.trim() && !!a.value;
+    case 'scroll':
+      return !!a.selector.trim() || !!a.to || typeof a.extra.to === 'number';
+    case 'goto':
+      return !!a.url.trim();
+    case 'press':
+      return !!a.key.trim();
+    case 'wait':
+      return true;
+  }
+}
+
+/** The steps that go into the config: scroll videos only hover, click and type. */
+export const recordedActions = (f: FormState) =>
+  f.actions.filter((a) => (f.kind === 'tour' || SCROLL_ACTIONS.includes(a.type)) && isComplete(a));
+
 /**
  * Changes an action's type. The form hides the text filter of type actions
  * (an <input> has no text to match), so a filter set before must not stay.
  */
 export const setActionType = (a: FormAction, type: FormAction['type']): FormAction =>
-  ({ ...a, type, ...(type === 'type' ? { text: '' } : {}) });
+  ({ ...a, type, ...(type === 'type' ? { text: '' } : {}), ...(type === 'press' && !a.key ? { key: 'Escape' } : {}) });
+
+/** One step as it goes into the config. */
+export function actionToConfig(a: FormAction): Record<string, unknown> {
+  const usesElement = ['hover', 'click', 'type', 'scroll'].includes(a.type);
+  const { to: extraTo, ...extra } = a.extra;
+  return {
+    ...extra,
+    type: a.type,
+    ...(usesElement && a.selector.trim() ? { selector: a.selector.trim() } : {}),
+    ...(usesElement && a.text.trim() ? { text: a.text.trim() } : {}),
+    ...(a.type === 'type' ? { value: a.value } : {}),
+    ...(a.type === 'scroll' && !a.selector.trim() ? { to: a.to || extraTo } : {}),
+    ...(a.type === 'goto' ? { url: a.url.trim() } : {}),
+    ...(a.type === 'press' ? { key: a.key.trim() } : {}),
+    duration: a.duration,
+  };
+}
+
+/**
+ * Tour steps for the preview, one per form step (so indexes match): steps
+ * that are not filled in yet do nothing there.
+ */
+export const previewSteps = (actions: FormAction[]) =>
+  actions.map((a) => (isComplete(a) ? actionToConfig(a) : { type: 'wait', duration: 0 }));
 
 /** Builds the config JSON (only non-default values, so it stays readable). */
 export function toConfig(f: FormState): Record<string, unknown> {
   const d = DEFAULT_FORM;
   const c: Record<string, unknown> = { ...f.extra, url: f.url.trim() };
+  if (f.kind === 'tour') c.kind = 'tour';
   c.viewport = f.viewport === 'custom' ? { width: f.width, height: f.height } : f.viewport;
   if (f.deviceScaleFactor !== d.deviceScaleFactor) c.deviceScaleFactor = f.deviceScaleFactor;
   if (f.fps !== d.fps) c.fps = f.fps;
   if (f.format !== d.format) c.format = f.format;
   if (f.outputWidth && f.outputHeight) c.outputSize = { width: Number(f.outputWidth), height: Number(f.outputHeight) };
 
-  const scroll: Record<string, unknown> = { mode: f.mode };
-  if (f.tempo === 'duration') scroll.duration = f.duration;
+  // tours scroll only to reach a step, at the given speed
+  const scroll: Record<string, unknown> = f.kind === 'tour' ? {} : { mode: f.mode };
+  if (f.tempo === 'duration' && f.kind !== 'tour') scroll.duration = f.duration;
   else scroll.speed = f.speed;
   scroll.easing = f.easing;
-  if (f.mode === 'sections') {
+  if (f.kind === 'tour' && f.sectionOffset) scroll.sectionOffset = f.sectionOffset;
+  if (f.mode === 'sections' && f.kind !== 'tour') {
     scroll.pauseDuration = f.pauseDuration;
     if (lines(f.sections).length) scroll.sections = lines(f.sections);
     if (f.sectionOffset) scroll.sectionOffset = f.sectionOffset;
@@ -120,16 +191,7 @@ export function toConfig(f: FormState): Record<string, unknown> {
   c.introDuration = f.introDuration;
   c.outroDuration = f.outroDuration;
   if (lines(f.hideSelectors).length) c.hideSelectors = lines(f.hideSelectors);
-  const actions = f.actions
-    .filter((a) => a.selector.trim() && (a.type !== 'type' || a.value))
-    .map((a) => ({
-      ...a.extra,
-      type: a.type,
-      selector: a.selector.trim(),
-      ...(a.text.trim() ? { text: a.text.trim() } : {}),
-      ...(a.type === 'type' ? { value: a.value } : {}),
-      duration: a.duration,
-    }));
+  const actions = recordedActions(f).map(actionToConfig);
   if (actions.length) c.actions = actions;
   if (f.scrollDriver !== d.scrollDriver) c.scrollDriver = f.scrollDriver;
   if (f.lenisPath.trim() && f.lenisPath.trim() !== d.lenisPath) c.lenisPath = f.lenisPath.trim();
@@ -150,7 +212,7 @@ const str = (v: unknown, fallback: string) => (typeof v === 'string' ? v : fallb
 export function fromConfig(raw: Record<string, unknown>, name = ''): FormState {
   const d = DEFAULT_FORM;
   const {
-    url, viewport, deviceScaleFactor, fps, format, outputSize, scroll, introDuration, outroDuration,
+    url, kind, viewport, deviceScaleFactor, fps, format, outputSize, scroll, introDuration, outroDuration,
     hideSelectors, actions, scrollDriver, lenisPath, scrollHook, scrollContainer, injectCss, warmup, prepass, maxDuration, browser, output,
     ...extra
   } = raw;
@@ -163,6 +225,7 @@ export function fromConfig(raw: Record<string, unknown>, name = ''): FormState {
   return {
     url: str(url, ''),
     name,
+    kind: kind === 'tour' ? 'tour' : 'scroll',
     viewport: vp ? 'custom' : (['desktop', 'laptop', 'mobile'].includes(viewport as string) ? viewport : 'desktop') as ViewportMode,
     width: vp?.width ?? d.width,
     height: vp?.height ?? d.height,
@@ -196,13 +259,20 @@ export function fromConfig(raw: Record<string, unknown>, name = ''): FormState {
   };
 }
 
+const ACTION_TYPES: ActionType[] = ['hover', 'click', 'type', 'scroll', 'wait', 'goto', 'press'];
+
 function toFormAction(raw: Record<string, unknown>): FormAction {
-  const { type, selector, text, value, duration, ...extra } = raw;
+  const { type, selector, text, value, to, url, key, duration, ...extra } = raw;
+  // a scroll position in px has no field in the form, it is kept as it is
+  if (typeof to === 'number') extra.to = to;
   return {
-    type: type === 'click' || type === 'type' ? type : 'hover',
+    type: ACTION_TYPES.includes(type as ActionType) ? (type as ActionType) : 'hover',
     selector: str(selector, ''),
     text: str(text, ''),
     value: str(value, ''),
+    to: to === 'top' || to === 'bottom' ? to : '',
+    url: str(url, ''),
+    key: str(key, ''),
     duration: num(duration, 1.5),
     extra,
   };
@@ -210,6 +280,14 @@ function toFormAction(raw: Record<string, unknown>): FormAction {
 
 /** Rough duration estimate in seconds (page height unknown before loading). */
 export function estimateDuration(f: FormState): string {
+  if (f.kind === 'tour') {
+    const steps = recordedActions(f).reduce((s, a) => {
+      if (a.type === 'type') return s + 1 + [...a.value].length / 12 + a.duration;
+      if (a.type === 'hover' || a.type === 'click') return s + 0.7 + a.duration;
+      return s + a.duration;
+    }, 0);
+    return `≈ ${Math.round(f.introDuration + steps + f.outroDuration)} s plus Scrollen und Seitenwechsel`;
+  }
   if (f.tempo === 'duration') {
     return `≈ ${Math.round(f.introDuration + f.duration + f.outroDuration)} s`;
   }

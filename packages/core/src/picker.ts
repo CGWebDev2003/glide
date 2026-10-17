@@ -1,9 +1,9 @@
 import type { Browser, CDPSession, Page } from 'playwright';
-import { resolveViewport, type Config } from './config.js';
+import { resolveViewport, type Action, type Config } from './config.js';
 import { installPickerRuntime } from './page/picker-runtime.js';
 import { launchBrowser, newContext } from './recorder.js';
 
-export type PickMode = 'hover' | 'click' | 'hide' | 'type';
+export type PickMode = 'hover' | 'click' | 'hide' | 'type' | 'scroll';
 export interface PickRect { x: number; y: number; width: number; height: number }
 export interface PickCandidate { selector: string; label: string; rect: PickRect }
 /** Element under a point: `chain[0]` is the innermost hit, later entries its ancestors. */
@@ -13,6 +13,8 @@ export interface PickTarget { selector: string; text?: string }
 export interface PickValue extends PickTarget { value: string }
 /** A preview frame plus the action target rects measured for it (`seq` grows with every frame). */
 export interface PickFrame { seq: number; image: Buffer; rects: (PickRect | null)[] }
+/** Tours: what a step did in the preview. `navigated`: it opened another page. */
+export interface PickStepResult { ok: boolean; navigated: boolean; url: string }
 
 declare global {
   interface Window {
@@ -33,38 +35,64 @@ export class PickerSession {
   private targets: PickTarget[] = [];
   private values: PickValue[] = [];
   private closed = false;
+  /** tours: pages loaded so far, and whether the page started loading another one */
+  private documents = 0;
+  private navigating = false;
 
   private constructor(
     private browser: Browser,
     private page: Page,
     private cdp: CDPSession,
+    private config: Config,
     readonly width: number,
     readonly height: number,
-  ) {}
+  ) {
+    this.hidden = config.hideSelectors;
+  }
+
+  private hidden: string[];
+
+  get tour(): boolean {
+    return this.config.kind === 'tour';
+  }
+
+  /** The page shown in the preview. */
+  get url(): string {
+    return this.page.url();
+  }
 
   static async open(config: Config): Promise<PickerSession> {
     const browser = await launchBrowser({ ...config, headful: false });
     try {
       const context = await newContext(browser, config, 1);
-      await context.addInitScript({ content: `(() => { const __name = (f) => f; (${installPickerRuntime.toString()})(); })();` });
+      const tour = config.kind === 'tour';
+      await context.addInitScript({
+        content: `(() => { const __name = (f) => f; (${installPickerRuntime.toString()})(${JSON.stringify({ tour })}); })();`,
+      });
       const page = await context.newPage();
       page.setDefaultTimeout(config.timeout);
-      // a click in the preview must never leave the page
-      await page.route('**/*', (route) =>
-        route.request().isNavigationRequest() && route.request().frame() === page.mainFrame() && page.url() !== 'about:blank'
-          ? route.abort()
-          : route.fallback(),
-      );
-      await page.goto(config.url, { waitUntil: 'domcontentloaded' });
-      const css = [
-        config.hideScrollbar ? 'html { scrollbar-width: none !important; } ::-webkit-scrollbar { display: none !important; }' : '',
-        config.injectCss ?? '',
-      ].join('\n');
-      await page.addStyleTag({ content: css });
-      await page.evaluate((s) => window.__glidePick.setHidden(s), config.hideSelectors);
+      if (!tour) {
+        // a click in the preview must never leave the page
+        await page.route('**/*', (route) =>
+          route.request().isNavigationRequest() && route.request().frame() === page.mainFrame() && page.url() !== 'about:blank'
+            ? route.abort()
+            : route.fallback(),
+        );
+      }
       const cdp = await context.newCDPSession(page);
       const vp = resolveViewport(config);
-      const session = new PickerSession(browser, page, cdp, vp.width, vp.height);
+      const session = new PickerSession(browser, page, cdp, config, vp.width, vp.height);
+      if (tour) {
+        // tours click through to other pages: each one gets the same treatment
+        page.on('request', (r) => { if (r.isNavigationRequest() && r.frame() === page.mainFrame()) session.navigating = true; });
+        page.on('domcontentloaded', () => {
+          session.documents++;
+          session.values = [];
+          void session.prepare().catch(() => {});
+        });
+      }
+      await page.goto(config.url, { waitUntil: 'domcontentloaded' });
+      if (!tour) await session.prepare();
       cdp.on('Page.screencastFrame', (f) => void session.onFrame(f.data, f.sessionId));
       await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 70, maxWidth: vp.width, maxHeight: vp.height, everyNthFrame: 1 });
       return session;
@@ -72,6 +100,16 @@ export class PickerSession {
       await browser.close().catch(() => {});
       throw e;
     }
+  }
+
+  /** Scrollbar, own CSS and the hidden elements, like in the recording. */
+  private async prepare() {
+    const css = [
+      this.config.hideScrollbar ? 'html { scrollbar-width: none !important; } ::-webkit-scrollbar { display: none !important; }' : '',
+      this.config.injectCss ?? '',
+    ].join('\n');
+    await this.page.addStyleTag({ content: css });
+    await this.page.evaluate((s) => window.__glidePick.setHidden(s), this.hidden);
   }
 
   /**
@@ -130,7 +168,73 @@ export class PickerSession {
   }
 
   async setHidden(selectors: string[]): Promise<void> {
+    this.hidden = selectors;
     await this.page.evaluate((s) => window.__glidePick.setHidden(s), selectors);
+  }
+
+  /**
+   * Tours: runs a step in the preview, so the next ones can be picked on
+   * what it leads to (a dialog, another page). Waits for a page it opens.
+   */
+  async run(step: Action): Promise<PickStepResult> {
+    const before = this.documents;
+    this.navigating = false;
+    let ok = true;
+    const at = step.selector
+      ? await this.page.evaluate(([s, t]) => window.__glidePick.reveal(s, t) as { x: number; y: number } | null, [step.selector, step.text] as const)
+      : null;
+    switch (step.type) {
+      case 'click':
+      case 'hover':
+        if (!at) { ok = false; break; }
+        if (step.type === 'click') await this.page.mouse.click(at.x, at.y);
+        else await this.page.mouse.move(at.x, at.y);
+        break;
+      case 'type':
+        ok = !!at && await this.page.evaluate(([s, t, v]) => window.__glidePick.fill(s, t, v) as boolean, [step.selector!, step.text, step.value ?? ''] as const);
+        if (ok && step.value?.includes('\n')) await this.page.keyboard.press('Enter');
+        break;
+      case 'scroll':
+        if (!step.selector) await this.page.evaluate((to) => window.scrollTo(0, to === 'top' ? 0 : to === 'bottom' ? document.documentElement.scrollHeight : Number(to)), step.to ?? 0);
+        else ok = !!at;
+        break;
+      case 'press':
+        await this.page.keyboard.press(step.key!);
+        break;
+      case 'goto':
+        await this.page.goto(new URL(step.url!, this.page.url()).href, { waitUntil: 'domcontentloaded' });
+        break;
+      case 'wait':
+        break;
+    }
+    // give a navigation the click started a moment to show up, then wait for the page
+    const deadline = Date.now() + 400;
+    while (!this.navigating && this.documents === before && Date.now() < deadline) await new Promise((r) => setTimeout(r, 25));
+    if (this.navigating || this.documents !== before) {
+      const end = Date.now() + this.config.timeout;
+      while (this.documents === before && Date.now() < end) await new Promise((r) => setTimeout(r, 50));
+      await this.page.waitForLoadState('domcontentloaded').catch(() => {});
+    }
+    return { ok, navigated: this.documents !== before, url: this.page.url() };
+  }
+
+  /**
+   * Tours: opens the start page again and runs `steps` (quickly, without
+   * pauses) to get back to where they lead. Resolves to the index of the
+   * first step on the page shown now.
+   */
+  async replay(steps: Action[]): Promise<{ pageStart: number; failed: number[]; url: string }> {
+    await this.page.goto(this.config.url, { waitUntil: 'domcontentloaded' });
+    let pageStart = 0;
+    const failed: number[] = [];
+    for (const [i, step] of steps.entries()) {
+      const r = await this.run(step).catch(() => ({ ok: false, navigated: false }));
+      if (!r.ok) failed.push(i);
+      if (r.navigated) pageStart = i + 1;
+      // dialogs and menus open with an animation (real time here)
+      else if (step.type === 'click' || step.type === 'press') await new Promise((res) => setTimeout(res, 350));
+    }
+    return { pageStart, failed, url: this.page.url() };
   }
 
   /** Shows the texts of type actions in their fields (fields left out get their content back). */

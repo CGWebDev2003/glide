@@ -7,6 +7,7 @@ import { checkFfmpeg, FrameEncoder } from './ffmpeg.js';
 import { ActionPlayer, resolveActions, type ResolvedAction } from './actions.js';
 import { installGlideRuntime } from './page/runtime.js';
 import { buildTimeline, frameCount, scrollAt, segmentAt, type Timeline } from './timeline.js';
+import { runTour, type Navigation } from './tour.js';
 
 export const AUTO_SECTION_SELECTOR = 'body > header, header, section, footer, [data-glide-section]';
 
@@ -52,8 +53,13 @@ export interface RecordResult {
   renderMs: number;
   /** per-frame scrollY reported by the page */
   scrollPositions: number[];
-  /** actions that were found on the page, in timeline order (`Segment.action` indexes this) */
+  /**
+   * scroll: actions that were found on the page, in timeline order (`Segment.action` indexes this).
+   * tour: the steps that ran on an element, in order (`Segment.action` indexes config.actions).
+   */
   actions: ResolvedAction[];
+  /** tour: the pages shown, in order */
+  pages?: string[];
   probes: unknown[];
 }
 
@@ -100,7 +106,7 @@ export async function record(config: Config, opts: RecordOptions): Promise<Recor
     await context.addInitScript({
       content:
         `(() => { const __name = (f) => f; ` +
-        `(${installGlideRuntime.toString()})(${JSON.stringify({ seed: config.randomSeed })}); })();`,
+        `(${installGlideRuntime.toString()})(${JSON.stringify({ seed: config.randomSeed, tour: config.kind === 'tour' })}); })();`,
     });
     const page = await context.newPage();
     page.setDefaultTimeout(config.timeout);
@@ -113,9 +119,19 @@ export async function record(config: Config, opts: RecordOptions): Promise<Recor
     const timelineFrozen = await freezeTimeline(cdp);
     if (!timelineFrozen) warn('could not freeze the animation timeline via CDP, falling back to WAAPI only');
 
-    const load = async (reload = false) => {
-      if (reload) await page.reload({ waitUntil: 'load' });
-      else await page.goto(config.url, { waitUntil: 'load' });
+    // pages loaded so far (tours wait for the browser's next one after a form post)
+    let documents = 0;
+    let documentsSeen = 0;
+    page.on('domcontentloaded', () => { documents++; });
+    const load = async (how: 'goto' | 'reload' | 'follow' = 'goto', url = config.url) => {
+      if (how === 'reload') await page.reload({ waitUntil: 'load' });
+      else if (how === 'goto') await page.goto(url, { waitUntil: 'load' });
+      else {
+        const deadline = Date.now() + config.timeout;
+        while (documents <= documentsSeen && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+        await page.waitForLoadState('load');
+      }
+      documentsSeen = documents;
       await page.waitForLoadState('networkidle', { timeout: Math.min(15000, config.timeout) }).catch(() => {
         warn('network did not become idle within 15s, continuing');
       });
@@ -132,7 +148,7 @@ export async function record(config: Config, opts: RecordOptions): Promise<Recor
       log('Pre-pass: scrolling through the page to trigger lazy loading');
       await prepass(page, config);
       log('Reloading for fresh intro animations');
-      await load(true);
+      await load('reload');
       await preparePage(page, config);
     }
 
@@ -142,7 +158,7 @@ export async function record(config: Config, opts: RecordOptions): Promise<Recor
     // Clicks must not leave the page: links and forms keep their JS handlers,
     // but the browser's default navigation is cancelled.
     let navigatedTo: string | null = null;
-    if (config.actions.length) {
+    if (config.actions.length && config.kind === 'scroll') {
       await page.evaluate(() => window.__glide.setBlockNavigation(true));
       page.on('domcontentloaded', () => { navigatedTo ??= page.url(); });
     }
@@ -173,7 +189,8 @@ export async function record(config: Config, opts: RecordOptions): Promise<Recor
     const scrollPositions: number[] = [];
     const probes: unknown[] = [];
     let lastPreview = 0;
-    const shoot = async (y: number, total: number, phase: Progress['phase']) => {
+    let total = 1;
+    const shoot = async (y: number | null, phase: Progress['phase']) => {
       throwIfAborted();
       if (navigatedTo !== null) {
         throw new Error(`an action navigated away from the page (${navigatedTo}). Pick an element that does not open a new page.`);
@@ -201,8 +218,62 @@ export async function record(config: Config, opts: RecordOptions): Promise<Recor
         await writeFile(path.join(opts.debugFramesDir, name), buf);
       }
       frame++;
-      opts.onProgress?.({ frame, total, phase, elapsedMs: Date.now() - started });
+      opts.onProgress?.({ frame, total: Math.max(total, frame), phase, elapsedMs: Date.now() - started });
+      return actualY;
     };
+
+    if (config.kind === 'tour') {
+      // requests in flight, so a click can wait for what it loads (a dialog's content, the next route)
+      const inflight = new Set<unknown>();
+      const tracked = new Set(['document', 'xhr', 'fetch', 'script', 'stylesheet', 'image', 'font']);
+      page.on('request', (r) => { if (tracked.has(r.resourceType())) inflight.add(r); });
+      page.on('requestfinished', (r) => { inflight.delete(r); });
+      page.on('requestfailed', (r) => { inflight.delete(r); });
+      const tour = await runTour({
+        page,
+        config,
+        player,
+        log,
+        warn,
+        shoot,
+        frames: () => frame,
+        setTotal: (n) => { total = Math.max(1, n); },
+        navigate: async (nav: Navigation) => {
+          inflight.clear();
+          await load(nav.kind === 'native' ? 'follow' : 'goto', nav.url);
+          await preparePage(page, config);
+          await selectDriver(page, config, () => {});
+        },
+        settle: async () => {
+          const end = Date.now() + 3000;
+          let quietSince = Date.now();
+          while (Date.now() < end) {
+            if (inflight.size) quietSince = Date.now();
+            else if (Date.now() - quietSince >= 150) return;
+            await new Promise((r) => setTimeout(r, 25));
+          }
+        },
+      });
+      throwIfAborted();
+      await encoder.finish();
+      encoder = null;
+      const timeline: Timeline = { segments: tour.segments, duration: tour.duration };
+      log(`Tour: ${tour.duration.toFixed(1)} s, ${tour.steps.length} step(s) on an element, ${tour.pages.length} page(s)`);
+      return {
+        output: opts.output,
+        frames: frame,
+        duration: frame / config.fps,
+        driver,
+        maxScroll: await page.evaluate(() => window.__glide.getMaxScroll() as number).catch(() => 0),
+        timeline,
+        timelineFrozen,
+        renderMs: Date.now() - started,
+        scrollPositions,
+        actions: tour.steps,
+        pages: tour.pages,
+        probes,
+      };
+    }
 
     // ---- intro: stay at the top --------------------------------------------
     const introFrames = Math.round(config.introDuration * config.fps);
@@ -210,9 +281,9 @@ export async function record(config: Config, opts: RecordOptions): Promise<Recor
       const tl = await planTimeline(page, config, 0, await resolveActions(page, config, () => {}));
       return introFrames + frameCount(tl, config.fps);
     };
-    let total = Math.max(1, await estimate());
+    total = Math.max(1, await estimate());
     for (let i = 0; i < introFrames; i++) {
-      await shoot(0, total, 'intro');
+      await shoot(0, 'intro');
       if (i === 0) total = Math.max(1, await estimate()); // layout settles after first frame
     }
 
@@ -234,7 +305,7 @@ export async function record(config: Config, opts: RecordOptions): Promise<Recor
       } else if (actions.length) {
         await player.idle(1 / config.fps);
       }
-      await shoot(scrollAt(timeline, t), total, at?.segment.kind === 'action' ? 'action' : 'scroll');
+      await shoot(scrollAt(timeline, t), at?.segment.kind === 'action' ? 'action' : 'scroll');
     }
 
     throwIfAborted();

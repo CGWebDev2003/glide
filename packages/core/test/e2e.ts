@@ -13,6 +13,11 @@
  *  - type actions: text appears character by character through real key
  *    events, replaces existing text, the caret follows the virtual clock
  *    (two recordings are bit-identical)
+ *  - tours: steps run in order across a dialog, content loaded by a click,
+ *    an anchor link, a link to a subpage (opened in the same tab) and a
+ *    goto; scrolling only where needed (two recordings are bit-identical)
+ *
+ * E2E_ONLY=tour (or picker, actions, …) runs just that part.
  */
 import { execFileSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
@@ -319,6 +324,149 @@ async function runPickerLate(url: string) {
   }
 }
 
+const TOUR_PROBE = `(() => {
+  const dlg = document.getElementById('dialog');
+  const name = document.getElementById('name');
+  const cur = document.getElementById('__glide-cursor');
+  return {
+    page: location.pathname + location.search,
+    now: performance.now(),
+    y: Math.round(scrollY),
+    dialog: dlg ? +getComputedStyle(dlg).opacity * (dlg.classList.contains('open') ? 1 : 0) : 0,
+    name: name ? name.value : null,
+    inner: dlg ? dlg.querySelector('.dialog').scrollTop : 0,
+    loaded: !!document.getElementById('loaded'),
+    far: !!window.farClicked, hello: !!window.hello, escaped: !!window.escaped,
+    cookie: document.getElementById('cookie') ? getComputedStyle(document.getElementById('cookie')).display : null,
+    cursor: cur ? +cur.style.opacity : 0,
+  };
+})()`;
+
+type TourProbe = {
+  page: string; now: number; y: number; dialog: number; name: string | null; inner: number; loaded: boolean;
+  far: boolean; hello: boolean; escaped: boolean; cookie: string | null; cursor: number;
+};
+
+async function runTourCheck(base: string) {
+  console.log('\n── tour');
+  const warnings: string[] = [];
+  const fps = 30;
+  const config = parseConfig({
+    url: `${base}tour.html`,
+    kind: 'tour',
+    viewport: { width: 1280, height: 720 },
+    deviceScaleFactor: 1,
+    fps,
+    introDuration: 0.5,
+    outroDuration: 0.5,
+    scroll: { speed: 2000, minSegmentDuration: 0.6 },
+    encoderPreset: 'veryfast',
+    hideSelectors: ['#cookie'],
+    actions: [
+      { type: 'click', selector: '#open', duration: 0.6 },
+      { type: 'type', selector: '#name', value: 'Jörg', typingSpeed: 20, duration: 0.3 },
+      { type: 'click', selector: '#close', duration: 0.5 },
+      { type: 'click', selector: '#load', duration: 0.3 },
+      { type: 'hover', selector: '#loaded', duration: 0.3 },
+      { type: 'click', selector: '#far', duration: 0.5 },
+      { type: 'scroll', to: 'top', duration: 0.3 },
+      { type: 'click', selector: '#jump', duration: 0.5 },
+      { type: 'scroll', selector: '#missing', duration: 0.3 },
+      { type: 'scroll', to: 'top', duration: 0.2 },
+      { type: 'click', selector: '#next', duration: 1 },
+      { type: 'click', selector: '#hello', duration: 0.5 },
+      { type: 'press', key: 'Escape', duration: 0.3 },
+      { type: 'goto', url: 'tour.html?again', duration: 0.5 },
+      { type: 'wait', duration: 0.5 },
+    ],
+  });
+  const output = path.join(outDir, 'e2e-tour.mp4');
+  const r = await record(config, { output, probe: TOUR_PROBE, warn: (m) => { warnings.push(m); console.log(`  ⚠ ${m}`); } });
+  const p = r.probes as TourProbe[];
+  console.log(`  ${r.frames} frames, pages: ${r.pages?.map((u) => new URL(u).pathname + new URL(u).search).join(' → ')}`);
+
+  const pages = p.map((x) => x.page).filter((x, i, a) => i === 0 || a[i - 1] !== x);
+  check('tour pages in order, the subpage in the same tab', JSON.stringify(pages) === JSON.stringify(['/tour.html', '/tour-2.html', '/tour.html?again']),
+    pages.join(' → '));
+  check('every frame advances virtual time by 1/fps (within a page)',
+    p.every((x, i) => i === 0 || x.page !== p[i - 1].page || Math.abs(x.now - p[i - 1].now - 1000 / fps) < 1e-6));
+  const open = p.map((x) => x.dialog);
+  check('the dialog fades in (intermediate states)', open.filter((v) => v > 0.05 && v < 0.95).length >= 3, `${open.filter((v) => v > 0.05 && v < 0.95).length} frames`);
+  const names = [...new Set(p.map((x) => x.name).filter((v) => v !== null))];
+  check('text typed character by character in the dialog', JSON.stringify(names) === JSON.stringify(['', 'J', 'Jö', 'Jör', 'Jörg']), names.join('|'));
+  const closeAt = p.findIndex((x, i) => i > 0 && p[i - 1].dialog > 0.9 && x.dialog === 0);
+  check('the dialog closes, its body scrolled to reach the button', closeAt > 0 && p.some((x) => x.inner > 0), `frame ${closeAt}`);
+  check('no page scrolling while the dialog is open', p.filter((x) => x.dialog > 0).every((x) => x.y === 0));
+  const loadedAt = p.findIndex((x) => x.loaded);
+  check('content loaded by a click is there in the next frames, the hover on it ran',
+    loadedAt > 0 && r.actions.some((a) => a.selector === '#loaded'), `frame ${loadedAt}`);
+  const farAt = p.findIndex((x) => x.far);
+  const toFar = p.slice(loadedAt, farAt).map((x) => x.y);
+  check('scrolls smoothly to an element out of view, then clicks it',
+    farAt > 0 && toFar[toFar.length - 1] > 500 && toFar.filter((v) => v > 0 && v < toFar[toFar.length - 1]).length >= 5,
+    `y ${toFar[0]} → ${toFar[toFar.length - 1]}`);
+  const first = p.filter((x) => x.page === '/tour.html');
+  const maxY = Math.max(...first.map((x) => x.y));
+  const jumps = first.map((x, i) => (i ? Math.abs(x.y - first[i - 1].y) : 0));
+  check('an anchor link scrolls there smoothly (no jump)', maxY > 1200 && Math.max(...jumps) < 400, `max y ${maxY}, biggest step ${Math.max(...jumps)} px`);
+  check('missing elements are skipped with a warning', warnings.some((w) => w.includes('#missing')));
+  const second = p.filter((x) => x.page === '/tour-2.html');
+  check('subpage: starts at the top, the click and the key press ran there',
+    second.length > 0 && second[0].y === 0 && second.some((x) => x.hello) && second.some((x) => x.escaped));
+  check('hideSelectors apply on every page', second.every((x) => x.cookie === 'none'));
+  const last = p.filter((x) => x.page === '/tour.html?again');
+  check('goto opens a page, wait and outro hold there', Math.abs(last.length - (0.5 + 0.5 + 0.5) * fps) <= 2, `${last.length} frames`);
+  check('the cursor is gone after the page changed', second[0]?.cursor === 0 && last[0]?.cursor === 0);
+
+  const again = path.join(outDir, 'e2e-tour-2.mp4');
+  await record(config, { output: again });
+  const ha = frameHashes(output);
+  const hb = frameHashes(again);
+  const same = ha.filter((h, i) => h === hb[i]).length;
+  check('deterministic tour: two recordings are bit-identical', ha.length === hb.length && same === ha.length, `${same}/${ha.length} frames`);
+}
+
+/** Tours: steps run in the preview, clicks open dialogs and subpages, replay gets back there. */
+async function runPickerTour(base: string) {
+  console.log('\n── picker (tour)');
+  const s = await PickerSession.open(parseConfig({ url: `${base}tour.html`, kind: 'tour', viewport: { width: 1280, height: 720 }, hideSelectors: ['#cookie'] }));
+  try {
+    const center = (r: { x: number; y: number; width: number; height: number }) => [r.x + r.width / 2, r.y + r.height / 2] as const;
+    const visible = async (selector: string) => (await s.rects([{ selector }]))[0] !== null;
+    const open = await s.run(parseConfig({ url: base, kind: 'tour', actions: [{ type: 'click', selector: '#open' }] }).actions[0]);
+    await new Promise((r) => setTimeout(r, 500));
+    check('a click step runs in the preview and opens the dialog', open.ok && !open.navigated && await visible('#name'));
+    const [name] = await s.rects([{ selector: '#name' }]);
+    const field = (await s.inspect(...center(name!), 'type'))?.chain[0].selector;
+    check('fields in the dialog can be picked', field === '#name', field);
+    const step = (a: Record<string, unknown>) => parseConfig({ url: base, kind: 'tour', actions: [a] }).actions[0];
+    check('a type step fills the field', (await s.run(step({ type: 'type', selector: '#name', value: 'Max' }))).ok);
+    await s.run(step({ type: 'click', selector: '#close' }));
+    await new Promise((r) => setTimeout(r, 300));
+    check('closing the dialog in the preview', !(await visible('#name')));
+    const [mid] = await s.rects([{ selector: 'section:nth-of-type(1) h1' }]);
+    const block = await s.inspect(...center(mid!), 'scroll');
+    check('scroll mode picks the block (section)', block?.chain[block.start].selector.includes('section') ?? false, block?.chain[block.start].selector);
+    const next = await s.run(step({ type: 'click', selector: '#next' }));
+    check('a link opens the subpage in the preview (same tab)', next.navigated && next.url.endsWith('/tour-2.html'), next.url);
+    await new Promise((r) => setTimeout(r, 300));
+    check('hidden elements stay hidden on the next page', await visible('#hello') && !(await visible('#cookie')));
+    const steps = [
+      step({ type: 'click', selector: '#open' }),
+      step({ type: 'type', selector: '#name', value: 'Max' }),
+      step({ type: 'click', selector: '#close' }),
+      step({ type: 'click', selector: '#next' }),
+      step({ type: 'click', selector: '#hello' }),
+    ];
+    const r = await s.replay(steps);
+    check('replay gets back to the page the steps lead to', r.pageStart === 4 && r.failed.length === 0 && r.url.endsWith('/tour-2.html'),
+      `pageStart ${r.pageStart}, failed ${r.failed.join(',') || '–'}`);
+    check('preview frame after navigating', ((await s.nextFrame(0))?.image.length ?? 0) > 1000);
+  } finally {
+    await s.close();
+  }
+}
+
 /** Page whose <body> scrolls instead of the document (html, body { height: 100%; overflow-x: hidden }). */
 async function runContainer(url: string) {
   const fps = 30;
@@ -354,7 +502,21 @@ async function runContainer(url: string) {
 }
 
 const { server, url } = await startServer();
+const only = process.env.E2E_ONLY;
 try {
+  if (only) {
+    const parts: Record<string, () => Promise<void>> = {
+      picker: () => runPicker(`${url}actions.html`),
+      'picker-tour': () => runPickerTour(url),
+      actions: () => runActions(`${url}actions.html`),
+      container: () => runContainer(`${url}container.html`),
+      tour: () => runTourCheck(url),
+    };
+    if (!parts[only]) throw new Error(`E2E_ONLY: one of ${Object.keys(parts).join(', ')}`);
+    await parts[only]();
+    console.log(failures ? `\n${failures} check(s) failed` : '\nall checks passed');
+    process.exit(failures ? 1 : 0);
+  }
   const a = await run(`${url}?lenis=0`, 'e2e-native', 'native');
   verify('native', a, 30);
   const b = await run(url, 'e2e-lenis', 'lenis');
@@ -378,6 +540,9 @@ try {
   await runPickerLate(`${url}late.html`);
   await runActions(`${url}actions.html`);
   await runContainer(`${url}container.html`);
+  await runTourCheck(url);
+  await runPickerTour(url);
+  contactSheet(path.join(outDir, 'e2e-tour.mp4'), path.join(outDir, 'sheet-tour.png'), 0, 440, 12);
   contactSheet(path.join(outDir, 'e2e-actions.mp4'), path.join(outDir, 'sheet-actions.png'), 0, 400, 12);
 
   contactSheet(path.join(outDir, 'e2e-native.mp4'), path.join(outDir, 'sheet-intro.png'), 0, 44, 4);
