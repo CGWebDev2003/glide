@@ -15,3 +15,8 @@ export const SCROLL_DRIVERS = ['auto', 'native', 'lenis', 'custom'] as const;
 export const SCROLL_MODES = ['continuous', 'sections'] as const;
 export const FORMATS = ['mp4', 'webm'] as const;
 export const BROWSERS = ['chromium', 'chrome', 'msedge'] as const;
+
+/** scroll: scroll video (continuous or sections); tour: steps in order, across dialogs and subpages. */
+export const RECORDING_KINDS = ['scroll', 'tour'] as const;
+/** Step types that only make sense in a tour (kind "tour"). */
+export const TOUR_ONLY_ACTIONS = ['scroll', 'wait', 'goto', 'press'] as const;

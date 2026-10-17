@@ -4,7 +4,7 @@ import './globals.css';
 
 export const metadata: Metadata = {
   title: 'Glide',
-  description: 'Flüssige Scroll-Videos von Websites, Frame für Frame gerendert.',
+  description: 'Flüssige Scroll-Videos und Klick-Touren von Websites, Frame für Frame gerendert.',
   applicationName: 'Glide',
   appleWebApp: { capable: true, title: 'Glide', statusBarStyle: 'black-translucent' },
   icons: {

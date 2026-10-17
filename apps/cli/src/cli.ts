@@ -18,8 +18,8 @@ import {
 const program = new Command();
 program
   .name('glide')
-  .description('Record websites as perfectly smooth scroll videos (deterministic, frame by frame).')
-  .version('1.0.0');
+  .description('Record websites as perfectly smooth scroll videos or click-through tours (deterministic, frame by frame).')
+  .version('1.1.0');
 
 const num = (v: string) => {
   const n = Number(v);
@@ -34,6 +34,7 @@ program
   .option('-u, --url <url>', 'page URL (overrides config)')
   .option('-o, --out <file>', 'output file (.mp4 or .webm)')
   .addOption(new Option('-p, --preset <name>', 'viewport preset').choices(['desktop', 'laptop', 'mobile']))
+  .addOption(new Option('--kind <kind>', 'scroll video, or a tour through the steps in "actions" (subpages, dialogs)').choices(['scroll', 'tour']))
   .option('--viewport <WxH>', 'custom viewport, e.g. 1280x800')
   .option('--dsf <n>', 'deviceScaleFactor', num)
   .option('--fps <n>', 'frames per second', num)
@@ -47,8 +48,8 @@ program
   .option('--outro <s>', 'seconds at the bottom at the end', num)
   .addOption(new Option('--driver <driver>', 'scroll driver').choices(['auto', 'native', 'lenis', 'custom']))
   .option('--hide <selector...>', 'CSS selectors to hide (cookie banners, chat widgets)')
-  .option('--hover <selector...>', 'elements to hover (scrolling stops at each)')
-  .option('--click <selector...>', 'elements to click (scrolling stops at each)')
+  .option('--hover <selector...>', 'elements to hover (scrolling stops at each; tours: added as steps)')
+  .option('--click <selector...>', 'elements to click (scrolling stops at each; tours: added as steps)')
   .addOption(new Option('--cursor <style>', 'visible cursor during actions').choices(['auto', 'arrow', 'touch', 'none']))
   .option('--no-prepass', 'skip the lazy-loading pre-pass')
   .option('--max-duration <s>', 'safety cap for the video length', num)
@@ -66,6 +67,7 @@ program
     }
     if (o.url) raw.url = o.url;
     if (!raw.url) throw new ConfigError('No URL given. Use a config file with "url" or --url https://...');
+    if (o.kind) raw.kind = o.kind;
     if (o.preset) raw.viewport = o.preset;
     if (o.viewport) {
       const m = /^(\d+)x(\d+)$/.exec(o.viewport);

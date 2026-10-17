@@ -5,7 +5,7 @@ export default function manifest(): MetadataRoute.Manifest {
     id: '/',
     name: 'Glide – Scroll-Videos',
     short_name: 'Glide',
-    description: 'Flüssige Scroll-Videos von Websites, Frame für Frame gerendert.',
+    description: 'Flüssige Scroll-Videos und Klick-Touren von Websites, Frame für Frame gerendert.',
     start_url: '/',
     scope: '/',
     display: 'standalone',

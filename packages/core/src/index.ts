@@ -13,6 +13,8 @@ export {
   type PresetName,
 } from './config.js';
 export { EASINGS, EASING_NAMES, type EasingName } from './easing.js';
+export { RECORDING_KINDS, TOUR_ONLY_ACTIONS } from './options.js';
+export { runTour, tourMoveDuration, estimateStep, type Navigation, type TourHost, type TourResult } from './tour.js';
 export { checkFfmpeg, encoderArgs, extractPoster, ffmpegBinary, FfmpegError, FrameEncoder } from './ffmpeg.js';
 export {
   record,
@@ -33,4 +35,5 @@ export {
   type PickTarget,
   type PickValue,
   type PickFrame,
+  type PickStepResult,
 } from './picker.js';

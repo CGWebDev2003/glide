@@ -118,7 +118,7 @@ export function GlideApp({ sharedUrl }: { sharedUrl?: string }) {
           <Logo />
           <div>
             <h1>Glide</h1>
-            <p>Flüssige Scroll-Videos von Websites</p>
+            <p>Flüssige Scroll-Videos und Klick-Touren von Websites</p>
           </div>
         </div>
         <div className="topbar-right">

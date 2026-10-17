@@ -1,7 +1,10 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { EASING_NAMES, PRESETS } from '@glide/core/options';
-import { DEFAULT_FORM, estimateDuration, fromConfig, setActionType, toConfig, type FormAction, type FormState, type ViewportMode } from '@/lib/form';
+import {
+  DEFAULT_FORM, estimateDuration, fromConfig, newAction, setActionType, SCROLL_ACTIONS, toConfig,
+  type ActionType, type FormAction, type FormState, type ViewportMode,
+} from '@/lib/form';
 import type { Project } from '@/lib/types';
 import { Picker } from './Picker';
 import { hostOf } from './format';
@@ -55,11 +58,28 @@ export function RecordForm(p: Props) {
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [jsonOpen, setJsonOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const pickButton = (
+  const tour = f.kind === 'tour';
+  const pickButton = (label = '◎ In der Vorschau auswählen') => (
     <button type="button" className="btn ghost small pick-btn" disabled={!f.url.trim()} onClick={() => setPickerOpen(true)}
       title={f.url.trim() ? undefined : 'Zuerst eine URL eingeben'}>
-      ◎ In der Vorschau auswählen
+      {label}
     </button>
+  );
+  const introOutro = (
+    <div className="row">
+      <NumberField label={tour ? 'Intro am Anfang' : 'Intro oben'} unit="s" step={0.5} value={f.introDuration} onChange={(v) => set('introDuration', v)} />
+      <NumberField label={tour ? 'Outro am Ende' : 'Outro unten'} unit="s" step={0.5} value={f.outroDuration} onChange={(v) => set('outroDuration', v)} />
+    </div>
+  );
+  const easing = (
+    <label className="field">
+      <span>Easing</span>
+      <select value={f.easing} onChange={(e) => set('easing', e.target.value as FormState['easing'])}>
+        {EASING_NAMES.map((n) => (
+          <option key={n} value={n}>{EASING_LABELS[n] ?? n}</option>
+        ))}
+      </select>
+    </label>
   );
 
   useEffect(() => {
@@ -118,6 +138,30 @@ export function RecordForm(p: Props) {
         )}
       </Group>
 
+      <Group title="Art">
+        <Segmented
+          value={f.kind}
+          onChange={(v) => set('kind', v as FormState['kind'])}
+          options={[
+            { value: 'scroll', label: 'Scroll-Video', hint: 'durchgehend oder Sections' },
+            { value: 'tour', label: 'Klick-Tour', hint: 'Unterseiten & Dialoge' },
+          ]}
+        />
+      </Group>
+
+      {tour ? (
+        <Group title="Tour">
+          {pickButton('◎ In der Vorschau durchklicken')}
+          <ActionList tour actions={f.actions} onChange={(a) => set('actions', a)} />
+          <div className="row">
+            <NumberField label="Scroll-Tempo" unit="px/s" min={1} value={f.speed} onChange={(v) => set('speed', v)} />
+            {easing}
+          </div>
+          {introOutro}
+          <p className="hint">Videolänge: {estimateDuration(f)}</p>
+        </Group>
+      ) : (
+      <>
       <Group title="Scrollen">
         <Segmented
           value={f.mode}
@@ -145,14 +189,7 @@ export function RecordForm(p: Props) {
               </select>
             </div>
           </label>
-          <label className="field">
-            <span>Easing</span>
-            <select value={f.easing} onChange={(e) => set('easing', e.target.value as FormState['easing'])}>
-              {EASING_NAMES.map((n) => (
-                <option key={n} value={n}>{EASING_LABELS[n] ?? n}</option>
-              ))}
-            </select>
-          </label>
+          {easing}
         </div>
         {f.mode === 'sections' && (
           <>
@@ -166,15 +203,19 @@ export function RecordForm(p: Props) {
             </label>
           </>
         )}
-        <div className="row">
-          <NumberField label="Intro oben" unit="s" step={0.5} value={f.introDuration} onChange={(v) => set('introDuration', v)} />
-          <NumberField label="Outro unten" unit="s" step={0.5} value={f.outroDuration} onChange={(v) => set('outroDuration', v)} />
-        </div>
+        {introOutro}
         <p className="hint">Videolänge: {estimateDuration(f)}</p>
       </Group>
 
+      <Group title="Hover, Klicks & Eingaben">
+        {pickButton()}
+        <ActionList actions={f.actions} onChange={(a) => set('actions', a)} />
+      </Group>
+      </>
+      )}
+
       <Group title="Ausblenden">
-        {pickButton}
+        {pickButton()}
         <div className="chips">
           {COMMON_HIDE.map((c) => (
             <button
@@ -192,11 +233,6 @@ export function RecordForm(p: Props) {
           <span>CSS-Selektoren <em>einer pro Zeile</em></span>
           <textarea rows={2} placeholder="#cookie-banner" value={f.hideSelectors} onChange={(e) => set('hideSelectors', e.target.value)} />
         </label>
-      </Group>
-
-      <Group title="Hover, Klicks & Eingaben">
-        {pickButton}
-        <ActionList actions={f.actions} onChange={(a) => set('actions', a)} />
       </Group>
 
       <Group title="Ausgabe">
@@ -255,6 +291,9 @@ export function RecordForm(p: Props) {
               placeholder={"(y) => { document.querySelector('.scroller').scrollTop = y }"}
               onChange={(e) => set('scrollHook', e.target.value)} />
           </label>
+        )}
+        {tour && (
+          <NumberField label="Abstand oben beim Scrollen zu Ankern und Elementen" unit="px" value={f.sectionOffset} onChange={(v) => set('sectionOffset', v)} />
         )}
         <div className="row">
           <NumberField label="Warm-up" unit="s" step={0.5} value={f.warmup} onChange={(v) => set('warmup', v)} />
@@ -450,55 +489,132 @@ function ProjectBar(p: Props) {
   );
 }
 
-function ActionList({ actions, onChange }: { actions: FormAction[]; onChange: (a: FormAction[]) => void }) {
+const STEP_LABELS: Record<ActionType, string> = {
+  hover: 'Hover', click: 'Klick', type: 'Text', scroll: 'Scrollen', wait: 'Pause', goto: 'Seite', press: 'Taste',
+};
+const KEYS = ['Escape', 'Enter', 'Tab', 'ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', ' '];
+
+function ActionList({ actions, onChange, tour = false }: { actions: FormAction[]; onChange: (a: FormAction[]) => void; tour?: boolean }) {
   const update = (i: number, patch: Partial<FormAction>) =>
     onChange(actions.map((a, j) => (j === i ? { ...a, ...patch } : a)));
-  const add = (type: FormAction['type']) =>
-    onChange([...actions, { type, selector: '', text: '', value: '', duration: type === 'click' ? 2 : 1.5, extra: {} }]);
+  const add = (type: ActionType) => onChange([...actions, newAction(type)]);
+  const swap = (i: number, j: number) => {
+    const next = [...actions];
+    [next[i], next[j]] = [next[j], next[i]];
+    onChange(next);
+  };
+  const types: ActionType[] = tour ? ['click', 'hover', 'type', 'scroll', 'wait', 'goto', 'press'] : [...SCROLL_ACTIONS];
+  // a scroll video keeps tour steps in the form (switching back brings them back), but does not show them
+  const shown = actions.map((a, i) => ({ a, i })).filter(({ a }) => tour || SCROLL_ACTIONS.includes(a.type));
+  const hiddenSteps = actions.length - shown.length;
   return (
     <>
-      {actions.length > 0 && (
+      {shown.length > 0 && (
         <ol className="actions">
-          {actions.map((a, i) => (
+          {shown.map(({ a, i }, n) => (
             <li key={i} className="action">
               <select aria-label="Aktion" value={a.type}
-                onChange={(e) => onChange(actions.map((x, j) => (j === i ? setActionType(x, e.target.value as FormAction['type']) : x)))}>
-                <option value="hover">Hover</option>
-                <option value="click">Klick</option>
-                <option value="type">Text</option>
+                onChange={(e) => onChange(actions.map((x, j) => (j === i ? setActionType(x, e.target.value as ActionType) : x)))}>
+                {types.map((t) => <option key={t} value={t}>{tour ? `${n + 1}. ` : ''}{STEP_LABELS[t]}</option>)}
               </select>
-              <input aria-label="CSS-Selektor" className="mono" placeholder={a.type === 'type' ? '#suche' : '.button-primary'} value={a.selector}
-                onChange={(e) => update(i, { selector: e.target.value })} />
-              {a.type === 'type' ? (
-                <input aria-label="Text zum Eintippen" placeholder="Text zum Eintippen" required value={a.value}
-                  onChange={(e) => update(i, { value: e.target.value })} />
-              ) : (
-                <input aria-label="Text (optional)" placeholder="Text (optional)" value={a.text}
-                  onChange={(e) => update(i, { text: e.target.value })} />
-              )}
+              <StepTarget a={a} update={(patch) => update(i, patch)} />
               <div className="input-unit">
-                <input aria-label="Dauer" type="number" min={0} step={0.5} value={a.duration}
+                <input aria-label={a.type === 'wait' ? 'Pause' : 'Dauer'} type="number" min={0} step={0.5} value={a.duration}
                   onChange={(e) => update(i, { duration: e.target.value === '' ? 0 : Number(e.target.value) })} />
                 <span>s</span>
               </div>
-              <button type="button" className="btn ghost small danger" aria-label="Entfernen"
-                onClick={() => onChange(actions.filter((_, j) => j !== i))}>✕</button>
+              <div className="action-ctl">
+                {tour && (
+                  <>
+                    <button type="button" className="btn ghost small icon" aria-label="Nach oben" title="Nach oben" disabled={n === 0}
+                      onClick={() => swap(i, shown[n - 1].i)}>↑</button>
+                    <button type="button" className="btn ghost small icon" aria-label="Nach unten" title="Nach unten" disabled={n === shown.length - 1}
+                      onClick={() => swap(i, shown[n + 1].i)}>↓</button>
+                  </>
+                )}
+                <button type="button" className="btn ghost small danger" aria-label="Entfernen"
+                  onClick={() => onChange(actions.filter((_, j) => j !== i))}>✕</button>
+              </div>
             </li>
           ))}
         </ol>
       )}
       <div className="row-buttons">
-        <button type="button" className="btn ghost small" onClick={() => add('hover')}>+ Hover</button>
-        <button type="button" className="btn ghost small" onClick={() => add('click')}>+ Klick</button>
-        <button type="button" className="btn ghost small" onClick={() => add('type')}>+ Text</button>
+        {types.map((t) => (
+          <button key={t} type="button" className="btn ghost small" onClick={() => add(t)}>+ {STEP_LABELS[t]}</button>
+        ))}
       </div>
-      <p className="hint">
-        Das Scrollen hält an jedem Element an, ein Cursor fährt hin und hovert, klickt oder klickt ins Feld und tippt den Text ein
-        (vorhandener Text wird ersetzt). Reihenfolge: von oben nach unten. Links und Formulare öffnen keine neue Seite.
-        Mit „Text (optional)“ wählst du bei Hover und Klick unter mehreren Treffern das Element mit diesem Text.
-      </p>
+      {tour ? (
+        <p className="hint">
+          Die Schritte laufen der Reihe nach ab. Glide scrollt nur, wenn ein Element nicht im Bild ist, und wartet kurz auf Elemente,
+          die erst erscheinen (Dialoge, nachgeladene Inhalte). Links öffnen die Unterseite im selben Tab, das Video schneidet dorthin,
+          danach steht die Seite für die Dauer des Klicks. „Taste“ drückt z. B. Escape, um einen Dialog zu schließen.
+        </p>
+      ) : (
+        <p className="hint">
+          Das Scrollen hält an jedem Element an, ein Cursor fährt hin und hovert, klickt oder klickt ins Feld und tippt den Text ein
+          (vorhandener Text wird ersetzt). Reihenfolge: von oben nach unten. Links und Formulare öffnen keine neue Seite.
+          Mit „Text (optional)“ wählst du bei Hover und Klick unter mehreren Treffern das Element mit diesem Text.
+          {hiddenSteps > 0 && ` ${hiddenSteps} Tour-Schritt(e) (Scrollen, Pause, Seite, Taste) gelten nur in der Klick-Tour.`}
+        </p>
+      )}
     </>
   );
+}
+
+/** The fields of a step that say what it acts on (two grid cells: `main` and `second`). */
+function StepTarget({ a, update }: { a: FormAction; update: (patch: Partial<FormAction>) => void }) {
+  const selector = (placeholder: string, className = 'main') => (
+    <input aria-label="CSS-Selektor" className={`mono ${className}`} placeholder={placeholder} value={a.selector}
+      onChange={(e) => update({ selector: e.target.value })} />
+  );
+  const filter = (
+    <input aria-label="Text (optional)" className="second" placeholder="Text (optional)" value={a.text}
+      onChange={(e) => update({ text: e.target.value })} />
+  );
+  switch (a.type) {
+    case 'hover':
+    case 'click':
+      return <>{selector('.button-primary')}{filter}</>;
+    case 'type':
+      return (
+        <>
+          {selector('#suche')}
+          <input aria-label="Text zum Eintippen" className="second" placeholder="Text zum Eintippen" required value={a.value}
+            onChange={(e) => update({ value: e.target.value })} />
+        </>
+      );
+    case 'scroll':
+      return (
+        <>
+          <select aria-label="Scrollen bis" className="main" value={a.to || ''} onChange={(e) => update({ to: e.target.value as FormAction['to'] })}>
+            <option value="">zu einem Element</option>
+            <option value="top">ganz nach oben</option>
+            <option value="bottom">ganz nach unten</option>
+          </select>
+          {a.to ? <span className="second" /> : selector('#preise', 'second')}
+        </>
+      );
+    case 'goto':
+      return (
+        <>
+          <input aria-label="Seite" className="mono main" inputMode="url" placeholder="/kontakt oder https://…" required value={a.url}
+            onChange={(e) => update({ url: e.target.value })} />
+          <span className="second small muted">öffnet die Seite</span>
+        </>
+      );
+    case 'press':
+      return (
+        <>
+          <input aria-label="Taste" className="mono main" list="glide-keys" placeholder="Escape" required value={a.key}
+            onChange={(e) => update({ key: e.target.value })} />
+          <datalist id="glide-keys">{KEYS.map((k) => <option key={k} value={k} />)}</datalist>
+          <span className="second small muted">z. B. Escape, Enter, Tab</span>
+        </>
+      );
+    case 'wait':
+      return <><span className="main small muted">Seite steht still, Animationen laufen weiter</span><span className="second" /></>;
+  }
 }
 
 function Group({ title, children }: { title: string; children: React.ReactNode }) {

@@ -1,8 +1,9 @@
 # Glide
 
 Nimmt Websites als **perfekt flüssiges Scroll-Video** auf, inklusive CSS-Animationen,
-IntersectionObserver-Reveals, GSAP/ScrollTrigger und Lenis. Gedacht für Showcase-Videos
-von Kundenwebsites (Portfolio, Instagram, Akquise).
+IntersectionObserver-Reveals, GSAP/ScrollTrigger und Lenis. Oder als **Klick-Tour**: Glide klickt
+sich durch die Website, ihre Unterseiten und Dialoge, tippt Texte ein und drückt Buttons.
+Gedacht für Showcase-Videos von Kundenwebsites (Portfolio, Instagram, Akquise).
 
 Statt den Bildschirm in Echtzeit aufzunehmen, rendert Glide **deterministisch Frame für Frame**:
 Die Zeit im Browser ist virtuell. Pro Frame wird sie um exakt `1/fps` vorgestellt, die
@@ -42,7 +43,7 @@ npm run dev        # Entwicklungsmodus mit Hot Reload (ohne Service Worker)
 
 Die App läuft lokal auf deinem Rechner, gerendert wird dort ebenfalls. Es gibt keine Server- oder Cloudkosten.
 
-- **Aufnehmen**: URL eingeben, Gerät, Scroll-Modus, Tempo, Intro/Outro, Hover, Klicks, Texteingaben und auszublendende Elemente wählen. Für gängige Cookie-Banner und Chat-Widgets gibt es Ein-Klick-Chips. Seltene Optionen stehen unter „Erweitert“.
+- **Aufnehmen**: URL eingeben, Gerät und Art wählen: **Scroll-Video** (durchgehend oder in Sections) oder **Klick-Tour** (siehe [Klick-Touren](#klick-touren)). Dazu Tempo, Intro/Outro, Hover, Klicks, Texteingaben und auszublendende Elemente. Für gängige Cookie-Banner und Chat-Widgets gibt es Ein-Klick-Chips. Seltene Optionen stehen unter „Erweitert“.
 - **In der Vorschau auswählen**: öffnet die Seite live im Aufnahme-Viewport. Statt Selektoren einzutippen, zeigst du auf ein Element und klickst es an: als **Hover**, als **Klick**, als **Text** (Glide tippt ihn ins Eingabefeld) oder zum **Ausblenden** (Cookie-Banner, Chat-Widgets). Mehr unter [Elemente in der Vorschau auswählen](#elemente-in-der-vorschau-auswählen).
 - **Live-Fortschritt**: „Frame x von y“, Render-Geschwindigkeit, Restzeit und alle ~0,5 s ein Vorschaubild des aktuellen Frames. Aufnahmen landen in einer Warteschlange und laufen nacheinander. Eine laufende Aufnahme lässt sich abbrechen.
 - **Videos**: Galerie mit Poster-Bild, Player, Download, „Erneut“ (lädt die Einstellungen zurück ins Formular) und Löschen. Auf dem Handy kann der Player das Video direkt teilen.
@@ -117,6 +118,7 @@ Mit `--debug-frames <dir>` wird zusätzlich jeder 30. Frame als Bild gespeichert
 |---|---|
 | `-u, --url` | URL (überschreibt Config) |
 | `-o, --out` | Ausgabedatei (`.webm` schaltet auf WebM) |
+| `--kind` | `scroll` (Standard) oder `tour`, siehe [Klick-Touren](#klick-touren) |
 | `-p, --preset` | `desktop` (1920×1080), `laptop` (1440×900), `mobile` (390×844) |
 | `--viewport 1280x800` | eigener Viewport |
 | `--dsf`, `--fps`, `--format` | deviceScaleFactor, Framerate, `mp4`/`webm` |
@@ -159,12 +161,14 @@ Eine JSON-Datei pro Projekt. Nur `url` ist Pflicht, alles andere hat Defaults.
 ```
 
 Weitere Beispiele: [`apps/cli/examples/kunde-desktop.json`](apps/cli/examples/kunde-desktop.json),
-[`apps/cli/examples/kunde-instagram.json`](apps/cli/examples/kunde-instagram.json) (9:16, 1080×1920).
+[`apps/cli/examples/kunde-instagram.json`](apps/cli/examples/kunde-instagram.json) (9:16, 1080×1920),
+[`apps/cli/examples/kunde-tour.json`](apps/cli/examples/kunde-tour.json) (Klick-Tour).
 In der Web-App lassen sich dieselben Dateien unter „Config als JSON → Datei laden“ öffnen.
 
 | Feld | Default | Beschreibung |
 |---|---|---|
-| `url` | – | Seite |
+| `url` | – | Seite (bei Touren die Startseite) |
+| `kind` | `"scroll"` | `scroll`: Scroll-Video; `tour`: Klick-Tour, `actions` laufen der Reihe nach, siehe [Klick-Touren](#klick-touren) |
 | `output` | `<host>-<preset>.mp4` | Ausgabedatei, relativ zur Config |
 | `viewport` | `"desktop"` | `"desktop"`, `"laptop"`, `"mobile"` oder `{ "width", "height" }` |
 | `deviceScaleFactor` | `2` | Render-Auflösung. Das Video wird mit Lanczos auf `outputSize` skaliert, das gibt scharfe Texte |
@@ -188,7 +192,7 @@ In der Web-App lassen sich dieselben Dateien unter „Config als JSON → Datei 
 | `lenisPath` | `"lenis"` | Pfad auf `window` zur Lenis-Instanz, z. B. `"app.lenis"` |
 | `scrollHook` | – | für `custom`: JS-Funktion als String, `"(y) => { … }"`, darf async sein |
 | `scrollContainer` | `"auto"` | Element, das statt des Dokuments scrollt. `auto`: wird erkannt, wenn das Dokument selbst nicht scrollen kann (z. B. `html, body { height: 100%; overflow-x: hidden }`); `none`: immer das Dokument; sonst ein CSS-Selektor |
-| `actions` | `[]` | Hover, Klicks & Texteingaben, siehe unten |
+| `actions` | `[]` | Hover, Klicks & Texteingaben, siehe unten; bei Touren die Schritte |
 | `cursor.style` / `cursor.size` | `"auto"` / `28` | sichtbarer Cursor bei Aktionen: `auto` (Pfeil, auf Mobil-Viewports ein Touch-Punkt), `arrow`, `touch`, `none`; Größe in CSS-px |
 | `hideSelectors` | `[]` | werden per injiziertem CSS mit `display:none !important` ausgeblendet, auch wenn sie später erscheinen |
 | `injectCss` / `injectScript` | – | eigenes CSS bzw. JS (Funktionskörper, async erlaubt), läuft nach dem Laden |
@@ -250,6 +254,59 @@ Glide wählt dabei sinnvolle Ziele: Bei Hover/Klick das klickbare Element (Butto
 
 In der Vorschau führen Klicks nie zu einer anderen Seite. Nach 3 Minuten ohne Aktivität schließt Glide den Vorschau-Browser. Es läuft immer nur eine Vorschau gleichzeitig.
 
+## Klick-Touren
+
+Mit `"kind": "tour"` scrollt Glide nicht einmal durch die Seite, sondern spielt die `actions` als **Schritte in der angegebenen Reihenfolge** ab: Dialog öffnen, Formular ausfüllen, Dialog schließen, zur Unterseite, dort weiter klicken.
+
+```json
+{
+  "url": "https://www.kunde.de",
+  "kind": "tour",
+  "hideSelectors": ["#CybotCookiebotDialog"],
+  "actions": [
+    { "type": "click", "selector": "button.kontakt" },
+    { "type": "type", "selector": "#name", "value": "Max Mustermann" },
+    { "type": "press", "key": "Escape" },
+    { "type": "scroll", "selector": "#leistungen" },
+    { "type": "click", "selector": "nav a", "text": "Über uns", "duration": 2.5 },
+    { "type": "scroll", "to": "bottom", "duration": 1 },
+    { "type": "goto", "url": "/referenzen" },
+    { "type": "wait", "duration": 2 }
+  ]
+}
+```
+
+Zusätzlich zu `hover`, `click` und `type` gibt es in Touren:
+
+| Schritt | Felder | Bedeutung |
+|---|---|---|
+| `scroll` | `selector` oder `to` (`"top"`, `"bottom"`, px) | flüssig dorthin scrollen (Abstand oben: `scroll.sectionOffset`), danach `duration` s stehen |
+| `wait` | `duration` | Pause, Animationen der Seite laufen weiter |
+| `goto` | `url` (absolut oder relativ zur aktuellen Seite) | Seite öffnen, danach `duration` s stehen |
+| `press` | `key` (`Escape`, `Enter`, `Tab`, `ArrowDown` …) | Taste drücken, z. B. um einen Dialog zu schließen |
+
+So läuft es ab:
+
+- Gescrollt wird **nur, wenn das Element nicht im Bild ist**, mit `scroll.speed` und `scroll.easing` (mindestens `scroll.minSegmentDuration`). Elemente in fixierten Ebenen (Dialoge, Menüs, Off-Canvas) werden ohne Scrollen angefahren. Liegt ein Element in einem eigenen Scrollbereich (z. B. lange Dialoge), wird dieser so weit gescrollt, dass es sichtbar ist (das springt).
+- Erscheint ein Element erst nach dem vorherigen Schritt (Dialog blendet ein, Inhalt wird nachgeladen), wartet Glide bis zu 2 s darauf. Nach jedem Klick wartet Glide außerdem (in Echtzeit, bis 3 s), bis die Anfragen der Seite fertig sind. Im Video vergeht dabei keine Zeit.
+- **Links öffnen die Unterseite im selben Tab**, auch bei `target="_blank"` und `window.open`. Während sie lädt, entstehen keine Frames: Das Video schneidet direkt auf die neue Seite, die dann für die `duration` des Klicks steht. Jede Seite wird wie die erste vorbereitet (ausgeblendete Elemente, eigenes CSS, Bilder, Fonts), die virtuelle Zeit beginnt neu, Intro-Animationen laufen also.
+- **Anker-Links** (`#kontakt`) scrollen flüssig zum Ziel, statt zu springen. Hash-Router (`#/seite`) und Single-Page-Apps (`pushState`) bleiben, wie sie sind.
+- Formulare, die per POST abschicken, lädt der Browser selbst, Glide wartet auf die neue Seite. Downloads werden übersprungen.
+- `introDuration` steht am Anfang, `outroDuration` am Ende auf der letzten Seite. `maxDuration` beendet die Tour (mit Warnung), statt schneller zu scrollen.
+- Elemente, die nicht gefunden werden, werden mit einer Warnung übersprungen.
+
+### Durchklicken in der Vorschau
+
+In der Web-App unter „Art“ **Klick-Tour** wählen und **„In der Vorschau durchklicken“**. Die Vorschau verhält sich dann wie die Aufnahme:
+
+- **Klick** führt den Klick in der Vorschau wirklich aus: Dialoge gehen auf, Links öffnen die Unterseite. Danach wählst du dort die nächsten Schritte. Rechts steht, welche Seite gerade zu sehen ist.
+- **Text**, **Hover**, **Ausblenden** wie bei Scroll-Videos, **Scrollen** fügt einen Scroll-Schritt zum angeklickten Bereich ein.
+- **+ Pause** und **Esc** (Escape drücken, wird sofort ausgeführt) ergänzen Schritte ohne Element.
+- **↻ Nachspielen** lädt die Startseite neu und spielt alle Schritte im Schnelldurchlauf ab. Das passiert auch beim Öffnen der Vorschau und wenn du einen Klick entfernst. Schritte, die dabei nicht gefunden werden, sind gelb markiert.
+- Im Formular lassen sich die Schritte mit ↑/↓ umsortieren und um **Seite** (URL öffnen) und **Taste** ergänzen.
+
+Wechselst du zurück zum Scroll-Video, bleiben Hover, Klicks und Eingaben erhalten. Tour-Schritte (Scrollen, Pause, Seite, Taste) bleiben im Formular gespeichert, landen aber nicht in der Config des Scroll-Videos.
+
 ## Ablauf einer Aufnahme
 
 1. Chromium (headless) starten. Vor jedem Seitenskript wird die Runtime injiziert (virtuelle Uhr), und die Animations-Timeline wird per CDP eingefroren.
@@ -271,6 +328,7 @@ packages/core/            @glide/core: der Recorder (von CLI und Web-App genutzt
   src/options.ts          browser-taugliche Konstanten für UIs (@glide/core/options)
   src/timeline.ts         reiner Scroll-Zeitplan: hold/move/action-Segmente, Easing, Sections, maxDuration
   src/actions.ts          Hover, Klicks & Eingaben: Elemente finden, Stopps wählen, Maus, Tastatur und Cursor pro Frame
+  src/tour.ts             Klick-Touren: Schritte der Reihe nach, Scrollen nach Bedarf, Seitenwechsel
   src/picker.ts           Vorschau zum Auswählen (PickerSession): Screenshots, Element unter dem Zeiger
   src/page/picker-runtime.ts  In-Page-Helfer der Vorschau: Zielwahl und Selektor-Erzeugung
   src/recorder.ts         Playwright-Ablauf, CDP, Treiberwahl, Frame-Loop, Abbruch, Live-Vorschau
@@ -332,7 +390,7 @@ Die Web-App lädt `@glide/core` zur Laufzeit mit Nodes eigenem Modul-Loader stat
 
 ```bash
 npm test          # Unit-Tests
-npm run test:e2e  # Testseite aufnehmen und Frames prüfen
+npm run test:e2e  # Testseite aufnehmen und Frames prüfen (E2E_ONLY=tour nur die Touren)
 npm run test:site -w @glide/core  # Testseite unter http://127.0.0.1:4173 (?lenis=0 ohne Lenis)
 ```
 
@@ -348,6 +406,7 @@ Zustand aus der Seite und prüft:
 - `hideSelectors` greift
 - Vorschau-Auswahl: Ausblenden wählt die äußerste fixierte Ebene, Klick den Button, Text nur beschreibbare Eingabefelder (auch über die Beschriftung), IDs werden genutzt, erzeugte Selektoren finden dasselbe Element wieder, ausgeblendete Elemente verschwinden, Texte erscheinen in ihren Feldern (auch in Feldern, die erst später auftauchen) und verschwinden beim Entfernen wieder
 - Hover, Klicks & Eingaben (eigene Testseite `actions.html`): `:hover`-Transitions und Klick-Handler sind in Zwischenzuständen zu sehen, der Hover wandert von einem Element zum nächsten, das Scrollen steht während der Aktionen, ein Link-Klick navigiert nicht, der Cursor blendet ein und aus, fehlende Elemente werden übersprungen. Text erscheint Zeichen für Zeichen über echte Tastatur-Events (auch Umlaute) und ersetzt vorhandenen Text, auch in `contenteditable` und wenn schneller getippt wird, als Frames kommen. Ohne fokussiertes, beschreibbares Textfeld wird nichts getippt. Der Text-Cursor ist nur beim Tippen zu sehen und blinkt danach auf der virtuellen Zeit, zwei Aufnahmen sind bitidentisch
+- Klick-Touren (eigene Testseiten `tour.html`, `tour-2.html`): Schritte laufen der Reihe nach über einen Dialog (blendet in Zwischenzuständen ein, Text Zeichen für Zeichen, sein Scrollbereich wird für den Schließen-Button gescrollt), nachgeladenen Inhalt, einen Anker-Link (flüssig, ohne Sprung), einen `target="_blank"`-Link (im selben Tab), eine Taste und `goto`. Gescrollt wird nur, wenn das Element nicht im Bild ist, ausgeblendete Elemente bleiben auf jeder Seite weg, zwei Aufnahmen sind bitidentisch. In der Vorschau öffnet ein Klick den Dialog bzw. die Unterseite, und Nachspielen landet wieder auf derselben Seite
 - **Determinismus**: zwei Aufnahmen sind Frame für Frame bitidentisch (`ffmpeg -f framemd5`; als Toleranz für Decoder-Rundung bei Videos auf der Seite ist > 40 dB PSNR erlaubt)
 
 Zusätzlich schreibt der Test Kontaktbögen (`packages/core/test/out/sheet-*.png`) zum Anschauen.
@@ -366,3 +425,4 @@ Zusätzlich schreibt der Test Kontaktbögen (`packages/core/test/out/sheet-*.png
 - Lenis wird nur gefunden, wenn die Instanz auf `window` erreichbar ist (`window.lenis = lenis` oder `lenisPath`). Sonst warnt Glide und scrollt nativ, was mit Lenis meist trotzdem funktioniert.
 - Preloader, die auf Timer warten, laufen in virtueller Zeit, also sichtbar im Intro. Mit `warmup` überspringen.
 - Bot-Schutz (Cloudflare o. Ä.) kann Headless-Browser blockieren.
+- **Klick-Touren**: Inhalte, die eine Single-Page-App nach einem Klick lädt, erscheinen, sobald die Anfrage in Echtzeit fertig ist. Glide wartet bis zu 3 s darauf, langsamere Antworten können zwischen zwei Aufnahmen an unterschiedlichen Frames auftauchen. Seiten hinter einem Login brauchen passende `headers` (Cookie). Was in einem neuen Fenster per `window.open` mit Fensterreferenz weiterarbeitet, funktioniert nicht.

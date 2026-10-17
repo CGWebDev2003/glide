@@ -12,9 +12,25 @@
  *  - the shortest of `leaf`, `anchor leaf` and the full `a > b > c` path that
  *    is unique wins
  */
-export function installPickerRuntime(): void {
+export function installPickerRuntime(opts?: { tour?: boolean }): void {
   const w = window as any;
   if (w.__glidePick) return;
+
+  // tours follow links in this tab, like the recording does (page/runtime.ts)
+  if (opts && opts.tour) {
+    window.addEventListener('click', (e) => {
+      const link = (e.target as Element | null)?.closest?.('a[href]') as HTMLAnchorElement | null;
+      if (link && link.target && link.target !== '_self') link.target = '_self';
+    }, true);
+    window.addEventListener('submit', (e) => {
+      const form = e.target as HTMLFormElement | null;
+      if (form?.target && form.target !== '_self') form.target = '_self';
+    }, true);
+    w.open = (url?: string | URL) => {
+      if (url) location.assign(new URL(String(url), location.href).href);
+      return null;
+    };
+  }
 
   const esc = (s: string) => (window.CSS && CSS.escape ? CSS.escape(s) : s.replace(/[^\w-]/g, '\\$&'));
   const count = (sel: string) => {
@@ -129,7 +145,7 @@ export function installPickerRuntime(): void {
   let hideStyle: HTMLStyleElement | null = null;
 
   w.__glidePick = {
-    inspect(x: number, y: number, mode: 'hover' | 'click' | 'hide' | 'type') {
+    inspect(x: number, y: number, mode: 'hover' | 'click' | 'hide' | 'type' | 'scroll') {
       let el = document.elementFromPoint(x, y);
       if (!el || el === document.documentElement || el === document.body) return null;
       if (mode === 'type') {
@@ -147,6 +163,10 @@ export function installPickerRuntime(): void {
           const pos = getComputedStyle(cur).position;
           if (pos === 'fixed' || pos === 'sticky') start = cur;
         }
+      } else if (mode === 'scroll') {
+        // scroll stops: the block the element belongs to (a section, a card with an id …)
+        const block = el.closest('section, header, footer, article, main > *, [id]');
+        if (block && block !== document.body && block !== document.documentElement) start = block;
       } else {
         const hit = el.closest(INTERACTIVE);
         if (hit && hit !== document.body) start = hit;
@@ -187,6 +207,22 @@ export function installPickerRuntime(): void {
         filled.set(el, { original: f ? f.original : read(el), value });
         write(el, value);
       }
+    },
+    /** Tours: writes a step's text into its field for good (replaying steps). */
+    fill(selector: string, text: string | undefined, value: string) {
+      const el = find(selector, text);
+      if (!isTextField(el)) return false;
+      el.focus();
+      write(el, value);
+      return true;
+    },
+    /** Tours: viewport centre of a step's element, scrolled into view first (null = not there). */
+    reveal(selector: string, text?: string) {
+      const el = find(selector, text);
+      if (!el) return null;
+      el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      const r = el.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
     },
     setHidden(selectors: string[]) {
       if (!hideStyle || !hideStyle.isConnected) {

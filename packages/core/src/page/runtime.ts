@@ -14,7 +14,7 @@
  * IMPORTANT: this function is serialized with Function.prototype.toString(),
  * so it must be fully self-contained (no imports, no outer references).
  */
-export function installGlideRuntime(opts: { seed: number | null }): void {
+export function installGlideRuntime(opts: { seed: number | null; tour?: boolean }): void {
   const w = window as any;
   if (w.__glide) return;
 
@@ -434,12 +434,74 @@ export function installGlideRuntime(opts: { seed: number | null }): void {
   // tabs, accordions). Only the browser's default action is cancelled: leaving
   // the page, and also hash jumps, which would fight the scroll timeline.
   window.addEventListener('click', (e) => {
-    if (blockNavigation && (e.target as Element | null)?.closest?.('a[href]')) e.preventDefault();
+    const link = (e.target as Element | null)?.closest?.('a[href]') as HTMLAnchorElement | null;
+    if (blockNavigation && link) e.preventDefault();
+    // tours follow links in the recorded tab: a new tab would not be in the video
+    if (tour && link && link.target && link.target !== '_self') link.target = '_self';
   }, true);
-  window.addEventListener('submit', (e) => { if (blockNavigation) e.preventDefault(); }, true);
+  window.addEventListener('submit', (e) => {
+    if (blockNavigation) e.preventDefault();
+    const form = e.target as HTMLFormElement | null;
+    if (tour && form?.target && form.target !== '_self') form.target = '_self';
+  }, true);
   w.open = function (...args: unknown[]) {
     if (blockNavigation) return null;
+    if (tour) {
+      try { pendingNavigation = { kind: 'document', url: new URL(String(args[0] ?? ''), location.href).href }; } catch { /* ignore */ }
+      return null;
+    }
     return (nativeOpen as any).apply(window, args);
+  };
+
+  // ---- tours: navigations ----------------------------------------------------
+  // Tours follow links to other pages. Every navigation the page starts is
+  // reported here synchronously (Navigation API), so Node knows in the very
+  // frame it happened: plain page loads are cancelled and done by Node itself
+  // (no frames are taken while the next page loads), jumps to an anchor are
+  // cancelled and scrolled smoothly instead. Form posts can't be repeated and
+  // run as they are. SPA route changes (pushState) stay in the page.
+  const tour = !!(opts && opts.tour);
+  type PendingNavigation = { kind: 'document' | 'native' | 'anchor' | 'download'; url: string };
+  let pendingNavigation: PendingNavigation | null = null;
+  const anchorTarget = (hash: string): Element | null => {
+    let id = hash.replace(/^#/, '');
+    try { id = decodeURIComponent(id); } catch { /* keep */ }
+    if (!id) return document.documentElement;
+    return document.getElementById(id) || document.getElementsByName(id)[0] || null;
+  };
+  const nav = w.navigation;
+  if (tour && nav && typeof nav.addEventListener === 'function') {
+    nav.addEventListener('navigate', (e: any) => {
+      const url: string = e.destination?.url ?? '';
+      if (e.downloadRequest !== null && e.downloadRequest !== undefined) {
+        if (e.cancelable) e.preventDefault();
+        pendingNavigation ??= { kind: 'download', url };
+        return;
+      }
+      if (e.hashChange) {
+        // hash routers (#/page) keep working: only real anchors are scrolled to
+        if (e.cancelable && anchorTarget(new URL(url).hash)) {
+          e.preventDefault();
+          pendingNavigation = { kind: 'anchor', url };
+        }
+        return;
+      }
+      if (e.destination?.sameDocument) return;
+      if (e.formData || !e.cancelable || e.navigationType === 'traverse') {
+        pendingNavigation = { kind: 'native', url };
+        return;
+      }
+      e.preventDefault();
+      pendingNavigation = { kind: 'document', url };
+    });
+  }
+
+  /** The element itself or an ancestor is fixed: scrolling the page doesn't move it (dialogs, menus). */
+  const isFixed = (el: Element) => {
+    for (let cur: Element | null = el; cur && cur !== document.documentElement; cur = cur.parentElement) {
+      if (getComputedStyle(cur).position === 'fixed') return true;
+    }
+    return false;
   };
 
   // ---- public API (called from Node via page.evaluate) ----------------------
@@ -490,7 +552,41 @@ export function installGlideRuntime(opts: { seed: number | null }): void {
         x: r.left, y: r.top, width: r.width, height: r.height,
         docY: r.top + w.__glide.getScrollY(),
         vw: window.innerWidth, vh: window.innerHeight,
+        fixed: isFixed(el),
       };
+    },
+    /**
+     * Tours: scrolls areas inside the page (a dialog's body, a side panel) so
+     * the element is visible there. The page itself is scrolled from Node.
+     * True if something moved.
+     */
+    revealInner(selector: string, text?: string) {
+      const el = findTarget(selector, text);
+      if (!el) return false;
+      const main = resolveContainer() || scrollEl();
+      let moved = false;
+      for (let cur = el.parentElement; cur && cur !== document.body && cur !== document.documentElement; cur = cur.parentElement) {
+        if (cur === main || !isScrollable(cur)) continue;
+        const c = cur.getBoundingClientRect();
+        const r = el.getBoundingClientRect();
+        if (r.top >= c.top && r.bottom <= c.bottom) continue;
+        const before = cur.scrollTop;
+        cur.scrollTop += r.top - c.top - Math.max(0, (c.height - r.height) / 2);
+        moved ||= cur.scrollTop !== before;
+      }
+      return moved;
+    },
+    /** Tours: the navigation the page started since the last call (null = none). */
+    takeNavigation() {
+      const n = pendingNavigation;
+      pendingNavigation = null;
+      return n;
+    },
+    /** Tours: document y of the element an anchor link points to (null = none). */
+    anchorY(url: string) {
+      const el = anchorTarget(new URL(url, location.href).hash);
+      if (!el) return null;
+      return el === document.documentElement ? 0 : el.getBoundingClientRect().top + getScrollY();
     },
     /** Draws the fake cursor (viewport px). The real mouse is moved from Node. */
     cursor(c: { x: number; y: number; opacity: number; scale: number; style: string; size: number }) {

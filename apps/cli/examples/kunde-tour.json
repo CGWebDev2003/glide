@@ -1,0 +1,19 @@
+{
+  "url": "https://www.kunde.de",
+  "kind": "tour",
+  "output": "kunde-tour.mp4",
+  "viewport": "desktop",
+  "scroll": { "speed": 900, "easing": "easeInOutCubic", "sectionOffset": 80 },
+  "introDuration": 2,
+  "outroDuration": 1.5,
+  "hideSelectors": ["#CybotCookiebotDialog", ".intercom-lightweight-app"],
+  "actions": [
+    { "type": "click", "selector": "button.kontakt", "duration": 1.5 },
+    { "type": "type", "selector": "#name", "value": "Max Mustermann", "duration": 1 },
+    { "type": "press", "key": "Escape", "duration": 1 },
+    { "type": "scroll", "selector": "#leistungen", "duration": 1.5 },
+    { "type": "click", "selector": "nav a", "text": "Über uns", "duration": 2.5 },
+    { "type": "scroll", "to": "bottom", "duration": 1 },
+    { "type": "goto", "url": "/referenzen", "duration": 2 }
+  ]
+}

@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>glide tour test page</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; }
+    body { background: #0f1115; color: #f3f1ea; font: 20px/1.5 system-ui, sans-serif; }
+    header { display: flex; gap: 32px; align-items: center; padding: 24px 8vw; border-bottom: 1px solid #222; }
+    header a { color: #ffbe0b; font-size: 24px; }
+    section { min-height: 100vh; padding: 12vh 8vw; border-top: 1px solid #222; }
+    h1 { font-size: 96px; line-height: 1; margin-bottom: 6vh; }
+    .btn { padding: 24px 48px; font: 700 26px system-ui; border: 0; border-radius: 16px; color: #fff; background: #3a86ff; margin-right: 24px; }
+    .overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, .6); display: none; place-items: center; z-index: 5;
+               opacity: 0; transition: opacity .4s ease; }
+    .overlay.open { display: grid; }
+    .overlay.shown { opacity: 1; }
+    .dialog { background: #fff; color: #000; border-radius: 16px; padding: 32px; width: 640px; max-height: 360px; overflow-y: auto; }
+    .dialog input { display: block; font: 26px system-ui; padding: 12px 16px; width: 100%; margin: 16px 0; border: 2px solid #333; border-radius: 10px; }
+    .dialog .tall { height: 600px; }
+    #loaded { display: inline-block; padding: 16px 32px; background: #06d6a0; color: #000; border-radius: 12px; margin-top: 4vh; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>Tour</strong>
+    <a id="next" href="tour-2.html" target="_blank">Unterseite</a>
+    <a id="jump" href="#bottom">Nach unten</a>
+  </header>
+  <section>
+    <h1>Start</h1>
+    <button class="btn" id="open" type="button">Dialog öffnen</button>
+    <button class="btn" id="load" type="button">Nachladen</button>
+    <div id="slot"></div>
+  </section>
+  <section><h2>Mitte</h2><button class="btn" id="far" type="button">Weit unten</button></section>
+  <section id="bottom"><h2>Unten</h2></section>
+  <div class="overlay" id="dialog">
+    <div class="dialog" role="dialog">
+      <h2>Kontakt</h2>
+      <input id="name" placeholder="Name" autocomplete="off">
+      <div class="tall"></div>
+      <button class="btn" id="close" type="button">Schließen</button>
+    </div>
+  </div>
+  <script>
+    const dialog = document.getElementById('dialog');
+    document.getElementById('open').addEventListener('click', () => {
+      dialog.classList.add('open');
+      requestAnimationFrame(() => requestAnimationFrame(() => dialog.classList.add('shown')));
+    });
+    document.getElementById('close').addEventListener('click', () => dialog.classList.remove('open', 'shown'));
+    window.addEventListener('keydown', (e) => { if (e.key === 'Escape') dialog.classList.remove('open', 'shown'); });
+    // content that only exists after a request (real time) has answered
+    document.getElementById('load').addEventListener('click', async () => {
+      await fetch('/img/1.svg?delay=400');
+      document.getElementById('slot').innerHTML = '<span id="loaded">Geladen</span>';
+    });
+    document.getElementById('far').addEventListener('click', (e) => { e.target.textContent = 'Geklickt'; window.farClicked = true; });
+  </script>
+</body>
+</html>
